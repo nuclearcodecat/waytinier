@@ -109,11 +109,11 @@ mod wayland {
 				Ok(l) => {
 					len = l;
 					println!("==== read to end\n{:?}", b);
-					if let Ok(str_) = str::from_utf8(&b) {
-						println!("==== string conversion\n{}", str_);
-					} else {
-						eprintln!("string conversion failed");
-					}
+					// if let Ok(str_) = str::from_utf8(&b) {
+					// 	println!("==== string conversion\n{}", str_);
+					// } else {
+					// 	eprintln!("string conversion failed");
+					// }
 				},
 				Err(er) => {
 					eprintln!("er: {:#?}", er);
@@ -135,13 +135,14 @@ mod wayland {
 				let byte2 = u32::from_ne_bytes([b[cursor + 4], b[cursor + 5], b[cursor + 6], b[cursor + 7]]);
 
 				let recv_len = byte2 >> 16;
-				println!("len: {}", recv_len);
+				// println!("len: {}", recv_len);
 				if recv_len < 8 {
 					eprintln!("recv_len bad");
 					return Err(());
 				}
 				let opcode = (byte2 & 0x0000ffff) as usize;
 
+				let mut args = vec![];
 				match sender_id {
 					// add an IdManager or smth
 					// display
@@ -151,7 +152,13 @@ mod wayland {
 								let obj_id = decode_event_payload(&b[cursor + 8..], WireArgumentKind::Obj)?;
 								let code = decode_event_payload(&b[cursor + 12..], WireArgumentKind::UnInt)?;
 								let message = decode_event_payload(&b[cursor + 16..], WireArgumentKind::String)?;
-								eprintln!("======== ERROR FIRED\nobj_id: {:?}\ncode: {:?}\nmessage: {:?}", obj_id, code, message);
+								eprintln!("======== ERROR FIRED in wl_display \nobj_id: {:?}\ncode: {:?}\nmessage: {:?}", obj_id, code, message);
+								args.push(obj_id);
+								args.push(code);
+								args.push(message);
+							},
+							1 => {
+								eprintln!("wl_display delete_id unimplemented");
 							},
 							_ => {
 								eprintln!("unimplemented");
@@ -161,6 +168,14 @@ mod wayland {
 					// registry
 					2 => {
 						match opcode {
+							0 => {
+								let name = decode_event_payload(&b[cursor + 8..], WireArgumentKind::UnInt)?;
+								let interface = decode_event_payload(&b[cursor + 12..], WireArgumentKind::String)?;
+								let version = decode_event_payload(&b[..b.len() - 4], WireArgumentKind::UnInt)?;
+								args.push(name);
+								args.push(interface);
+								args.push(version);
+							},
 							_ => {
 								eprintln!("unimplemented");
 							},
@@ -171,12 +186,12 @@ mod wayland {
 					},
 				}
 
-				println!("==== iter {}\nsender_id: {}, recv_len: {}, opcode: {}, payload ->:\n{:?}", ctr, sender_id, recv_len, opcode, &b[cursor_last + 8..cursor_last + recv_len as usize]);
+				// println!("==== iter {}\nsender_id: {}, recv_len: {}, opcode: {}, payload ->:\n{:?}", ctr, sender_id, recv_len, opcode, &b[cursor_last + 8..cursor_last + recv_len as usize]);
 
 				let event = WireMessage {
 					sender_id,
 					opcode,
-					args: vec![],
+					args,
 				};
 				events.push(event);
 
@@ -290,7 +305,9 @@ mod wayland {
 				Ok(WireArgument::UnInt(u32::from_ne_bytes([p[0], p[1], p[2], p[3]])))
 			},
 			WireArgumentKind::String => {
-				Ok(WireArgument::String(String::from_utf8(p.to_vec()).map_err(|_| {})?))
+				let len = u32::from_ne_bytes([p[0], p[1], p[2], p[3]]) as usize;
+				let ix = p[4..4+len].iter().enumerate().find(|(_, c)| **c == b'\0').map(|(e, _)| e).unwrap_or_default();
+				Ok(WireArgument::String(String::from_utf8(p[4..4+ix].to_vec()).map_err(|_| {})?))
 			},
 			// not sure how to handle this
 			WireArgumentKind::NewIdSpecific => {
@@ -298,7 +315,7 @@ mod wayland {
 				if let Some(pos) = nulterm {
 					let slice = &p[0..pos];
 					let str_ = str::from_utf8(slice).map_err(|_| {})?;
-					let version = u32::from_ne_bytes([p[pos + 0], p[pos + 1], p[pos + 2], p[pos + 3]]);
+					let version = u32::from_ne_bytes([p[pos], p[pos + 1], p[pos + 2], p[pos + 3]]);
 					let new_id = u32::from_ne_bytes([p[pos + 4], p[pos + 5], p[pos + 6], p[pos + 7]]);
 					Ok(WireArgument::NewIdSpecific(
 						str_.to_string(), 
