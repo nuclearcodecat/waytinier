@@ -31,12 +31,14 @@ impl Display {
 		Ok(id)
 	}
 
-	pub fn wl_sync(&mut self, wlmm: &mut MessageManager, wlim: &mut IdManager) -> Result<(), Box<dyn Error>> {
+	pub fn wl_sync(&mut self, wlmm: &mut MessageManager, wlim: &mut IdManager) -> Result<u32, Box<dyn Error>> {
+		let cb_id = wlim.new_id();
 		wlmm.send_request(&mut WireMessage {
 			sender_id: self.id,
 			opcode: 0,
-			args: vec![WireArgument::NewId(wlim.new_id())],
-		})
+			args: vec![WireArgument::NewId(cb_id)],
+		})?;
+		Ok(cb_id)
 	}
 }
 
@@ -97,17 +99,17 @@ impl<'a> Registry<'a> {
 			if let WireArgument::UnInt(name_) = e.args[0] {
 				name = name_;
 			} else {
-				return Err(Box::new(WaylandError::ParseError));
+				return Err(WaylandError::ParseError.boxed());
 			};
 			if let WireArgument::String(interface_) = &e.args[1] {
 				interface = interface_;
 			} else {
-				return Err(Box::new(WaylandError::ParseError));
+				return Err(WaylandError::ParseError.boxed());
 			};
 			if let WireArgument::UnInt(version_) = e.args[2] {
 				version = version_;
 			} else {
-				return Err(Box::new(WaylandError::ParseError));
+				return Err(WaylandError::ParseError.boxed());
 			};
 
 			self.inner
@@ -121,6 +123,7 @@ impl<'a> Registry<'a> {
 pub enum WaylandObject {
 	Display,
 	Registry,
+	Callback,
 	Compositor,
 }
 
@@ -129,6 +132,7 @@ impl WaylandObject {
 		match self {
 			WaylandObject::Display => "wl_display",
 			WaylandObject::Registry => "wl_registry",
+			WaylandObject::Callback => "wl_callback",
 			WaylandObject::Compositor => "wl_compositor",
 		}
 	}
@@ -138,12 +142,13 @@ impl WaylandObject {
 pub struct IdManager {
 	top_id: u32,
 	map: HashMap<WaylandObject, u32>,
+	free: Vec<u32>,
 }
 
 impl IdManager {
-	pub fn new_id(&mut self) -> u32 {
+	fn new_id(&mut self) -> u32 {
 		self.top_id += 1;
-		println!("new id called, new id is {}", self.top_id);
+		// println!("new id called, new id is {}", self.top_id);
 		self.top_id
 	}
 
@@ -154,6 +159,11 @@ impl IdManager {
 			.map(|(_, v)| v)
 			.copied()
 	}
+
+	#[allow(dead_code)]
+	fn free_id(&mut self, id: u32) {
+		self.free.push(id);
+	}
 }
 
 #[derive(Debug)]
@@ -161,6 +171,13 @@ pub enum WaylandError {
 	ParseError,
 	RecvLenBad,
 	NotInRegistry,
+	ObjectNonExistent,
+}
+
+impl WaylandError {
+	fn boxed(self) -> Box<Self> {
+		Box::new(self)
+	}
 }
 
 impl fmt::Display for WaylandError {
@@ -169,6 +186,7 @@ impl fmt::Display for WaylandError {
 			WaylandError::ParseError => write!(f, "parse error"),
 			WaylandError::RecvLenBad => write!(f, "received len is bad"),
 			WaylandError::NotInRegistry => write!(f, "given name was not found in the registry hashmap"),
+			WaylandError::ObjectNonExistent => write!(f, "requested object doesn't exist"),
 		}
 	}
 }

@@ -14,9 +14,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 	let reg_id = display.wl_get_registry(&mut wlmm, &mut wlim)?;
 	let mut registry = Registry::new(reg_id);
 
-	display.wl_sync(&mut wlmm, &mut wlim)?;
-
-	registry.wl_bind(&mut wlmm, &mut wlim, WaylandObject::Compositor)?;
+	let get_registry_callback_id = display.wl_sync(&mut wlmm, &mut wlim)?;
 
 	let mut read = wlmm.get_events()?;
 	while read.is_none() {
@@ -24,7 +22,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 	}
 	let read = &read.unwrap();
 	registry.fill(read)?;
+	println!("==== REGISTRY\n{:#?}", registry.inner);
 
+	registry.wl_bind(&mut wlmm, &mut wlim, WaylandObject::Compositor)?;
 
 	wlmm.discon()?;
 	println!("good");

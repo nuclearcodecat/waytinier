@@ -41,7 +41,6 @@ pub enum WireArgumentKind {
 
 pub struct MessageManager {
 	pub sock: UnixStream,
-	pub last_ass_id: u32,
 }
 
 impl MessageManager {
@@ -53,7 +52,6 @@ impl MessageManager {
 		sock.set_nonblocking(true)?;
 		let wlmm = Self {
 			sock,
-			last_ass_id: 1,
 		};
 
 		Ok(wlmm)
@@ -61,10 +59,6 @@ impl MessageManager {
 
 	pub fn discon(&self) -> Result<(), Box<dyn Error>> {
 		Ok(self.sock.shutdown(std::net::Shutdown::Both)?)
-	}
-
-	fn increment_id(&mut self) {
-		self.last_ass_id += 1;
 	}
 
 	pub fn send_request(&mut self, msg: &mut WireMessage) -> Result<(), Box<dyn Error>> {
@@ -97,20 +91,15 @@ impl MessageManager {
 	}
 
 	pub fn get_events(&mut self) -> Result<Option<Vec<WireMessage>>, Box<dyn Error>> {
-		let mut b: Vec<u8> = vec![];
+		// reading till eof was the worst mistake of my life
+		let mut b = [0; 8192];
 		let len;
-		match self.sock.read_to_end(&mut b) {
+		match self.sock.read(&mut b) {
 			Ok(l) => {
 				len = l;
-				// println!("==== read to end\n{:?}", b);
-				// if let Ok(str_) = str::from_utf8(&b) {
-				// 	println!("==== string conversion\n{}", str_);
-				// } else {
-				// 	eprintln!("string conversion failed");
-				// }
 			}
 			Err(er) => {
-				eprintln!("er: {:#?}", er);
+				eprintln!("get_events er: {}", er);
 				match er.kind() {
 					std::io::ErrorKind::WouldBlock => return Ok(None),
 					_ => {
@@ -133,13 +122,12 @@ impl MessageManager {
 			// println!("len: {}", recv_len);
 			if recv_len < 8 {
 				eprintln!("recv_len bad");
-				return Err(Box::new(WaylandError::RecvLenBad));
+				return Err(WaylandError::RecvLenBad.boxed());
 			}
 			let opcode = (byte2 & 0x0000ffff) as usize;
 
 			let mut args = vec![];
 			match sender_id {
-				// add an IdManager or smth
 				// display
 				1 => match opcode {
 					0 => {
