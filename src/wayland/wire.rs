@@ -24,10 +24,10 @@ pub enum WireArgument {
 	String(String),
 	Obj(u32),
 	NewId(u32),
-	NewIdSpecific(String, u32, u32),
+	NewIdSpecific(&'static str, u32, u32),
 	Arr(Vec<u8>),
 	// u32?
-	FileDescriptor(u32),
+	FileDescriptor(i32),
 }
 
 #[derive(Debug)]
@@ -74,9 +74,10 @@ impl MessageManager {
 	}
 
 	pub fn send_request(&mut self, msg: &mut WireMessage) -> Result<(), Box<dyn Error>> {
+		println!("==== SEND_REQUEST CALLED");
 		let mut buf: Vec<u8> = vec![];
 		buf.append(&mut Vec::from(msg.sender_id.to_ne_bytes()));
-		let argsize = {
+		let len = {
 			// header is 8
 			let mut complete = 8;
 			for n in msg.args.iter() {
@@ -85,7 +86,8 @@ impl MessageManager {
 			}
 			complete
 		};
-		let word2 = (argsize << 16) as u32 | (msg.opcode as u32 & 0x0000ffffu32);
+		let word2 = (len << 16) as u32 | (msg.opcode as u32 & 0x0000ffffu32);
+		println!("=== WORD2\n0b{:0b}\nlen: {}\nopcode: {}", word2, word2 >> 16, word2 & 0x0000ffff);
 		buf.append(&mut Vec::from(word2.to_ne_bytes()));
 		for obj in msg.args.iter_mut() {
 			match obj {
@@ -99,6 +101,7 @@ impl MessageManager {
 			}
 		}
 		self.sock.write_all(&buf)?;
+		println!("=== REQUEST SENT\n{:#?}\n{:?}\n\n", msg, buf);
 		Ok(())
 	}
 
@@ -108,8 +111,10 @@ impl MessageManager {
 		kind: WaylandObjectKind,
 	) -> Result<Vec<WireMessage>, Box<dyn Error>> {
 		let mut read = self.get_events(id, &kind)?;
-		while read.is_none() {
+		let mut retries = 0;
+		while read.is_none() && retries <= 30 {
 			read = self.get_events(id, &kind)?;
+			retries += 1;
 		}
 		Ok(read.unwrap())
 	}
@@ -121,7 +126,6 @@ impl MessageManager {
 				len = l;
 			}
 			Err(er) => {
-				eprintln!("get_events er: {}", er);
 				match er.kind() {
 					std::io::ErrorKind::WouldBlock => return Ok(None),
 					_ => {
@@ -164,24 +168,22 @@ impl MessageManager {
 
 			let mut args = vec![];
 
+			// if err occured
+			if sender_id == 1 && opcode == 0 {
+				let obj_id = decode_event_payload(&b[cursor + 8..], WireArgumentKind::Obj)?;
+				let code = decode_event_payload(&b[cursor + 12..], WireArgumentKind::UnInt)?;
+				let message = decode_event_payload(&b[cursor + 16..], WireArgumentKind::String)?;
+				eprintln!(
+					"======== ERROR FIRED in wl_display\n{:?}",
+					message
+				);
+				args.push(obj_id);
+				args.push(code);
+				args.push(message);
+			}
 			if sender_id == obj_id {
 				match kind {
 					WaylandObjectKind::Display => match opcode {
-						0 => {
-							let obj_id =
-								decode_event_payload(&b[cursor + 8..], WireArgumentKind::Obj)?;
-							let code =
-								decode_event_payload(&b[cursor + 12..], WireArgumentKind::UnInt)?;
-							let message =
-								decode_event_payload(&b[cursor + 16..], WireArgumentKind::String)?;
-							eprintln!(
-								"======== ERROR FIRED in wl_display \nobj_id: {:?}\ncode: {:?}\nmessage: {:?}",
-								obj_id, code, message
-							);
-							args.push(obj_id);
-							args.push(code);
-							args.push(message);
-						}
 						1 => {
 							let deleted_id =
 								decode_event_payload(&b[cursor + 8..], WireArgumentKind::UnInt)?;
@@ -266,7 +268,7 @@ impl WireArgument {
 				let mut complete: Vec<u8> = vec![];
 				// str len
 				complete.append(&mut Vec::from(x.len().to_ne_bytes()));
-				complete.append(&mut Vec::from(x.as_str()));
+				complete.append(&mut Vec::from(*x));
 				// pad str
 				complete.resize(complete.len() + complete.len() % 4, 0);
 				complete.append(&mut Vec::from(y.to_ne_bytes()));

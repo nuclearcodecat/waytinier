@@ -1,6 +1,7 @@
 use std::{collections::HashMap, error::Error, ffi::CString, fmt};
 
 // std depends on libc anyway so i consider using it fair
+// i may replace this with asm in the future but that means amd64 only
 use libc::{O_CREAT, O_RDWR, shm_open, shm_unlink};
 
 use crate::wayland::wire::{MessageManager, WireArgument, WireMessage};
@@ -16,7 +17,7 @@ impl Display {
 		Self { id: wlim.new_id() }
 	}
 
-	pub fn wl_get_registry(
+	fn wl_get_registry(
 		&mut self,
 		wlmm: &mut MessageManager,
 		wlim: &mut IdManager,
@@ -34,7 +35,7 @@ impl Display {
 		Ok(id)
 	}
 
-	pub fn wl_sync(
+	fn wl_sync(
 		&mut self,
 		wlmm: &mut MessageManager,
 		wlim: &mut IdManager,
@@ -50,13 +51,13 @@ impl Display {
 }
 
 pub struct Registry {
-	pub id: u32,
-	pub inner: HashMap<u32, RegistryEntry>,
+	id: u32,
+	inner: HashMap<u32, RegistryEntry>,
 }
 
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub struct RegistryEntry {
-	pub interface: String,
+	interface: String,
 	version: u32,
 }
 
@@ -81,7 +82,7 @@ impl Registry {
 		Ok(registry)
 	}
 
-	pub fn wl_bind(
+	fn wl_bind(
 		&mut self,
 		wlmm: &mut MessageManager,
 		wlim: &mut IdManager,
@@ -94,6 +95,7 @@ impl Registry {
 			.map(|(k, _)| k)
 			.copied()
 			.ok_or(WaylandError::NotInRegistry)?;
+		println!("bind global id for {}: {}", object.as_str(), global_id);
 		let new_id = wlim.new_id();
 
 		wlmm.send_request(&mut WireMessage {
@@ -101,7 +103,11 @@ impl Registry {
 			sender_id: self.id,
 			// first request in the proto
 			opcode: 0,
-			args: vec![WireArgument::UnInt(global_id), WireArgument::NewId(new_id)],
+			args: vec![
+				WireArgument::UnInt(global_id),
+				// WireArgument::NewId(new_id),
+				WireArgument::NewIdSpecific(object.as_str(), 1, new_id),
+			],
 		})?;
 
 		Ok(new_id)
@@ -156,7 +162,7 @@ impl Compositor {
 		Ok(Self::new(id))
 	}
 
-	pub fn wl_create_surface(
+	fn wl_create_surface(
 		&self,
 		wlmm: &mut MessageManager,
 		wlim: &mut IdManager,
@@ -189,12 +195,13 @@ impl SharedMemory {
 		Ok(Self::new(id))
 	}
 
-	pub fn wl_create_pool(
+	fn wl_create_pool(
 		&self,
 		name: &CString,
+		size: i32,
 		wlmm: &mut MessageManager,
 		wlim: &mut IdManager,
-	) -> Result<u32, Box<dyn Error>> {
+	) -> Result<(u32, i32), Box<dyn Error>> {
 		let fd = unsafe { shm_open(name.as_ptr(), O_RDWR | O_CREAT, 0) };
 		println!("fd: {}", fd);
 
@@ -204,39 +211,66 @@ impl SharedMemory {
 			opcode: 0,
 			args: vec![
 				WireArgument::NewId(id),
-				// fd,
+				WireArgument::FileDescriptor(fd),
+				WireArgument::Int(size),
 			],
 		})?;
-		Ok(id)
+		Ok((id, fd))
 	}
 }
 
 pub struct SharedMemoryPool {
 	id: u32,
 	name: CString,
-	size: usize,
+	size: i32,
+	fd: i32,
 }
 
 impl SharedMemoryPool {
-	pub fn new(id: u32, name: CString, size: usize) -> Self {
-		Self { id, name, size }
+	pub fn new(id: u32, name: CString, size: i32, fd: i32) -> Self {
+		Self { id, name, size, fd }
 	}
 
 	pub fn new_bound(
 		shm: &mut SharedMemory,
-		size: usize,
+		size: i32,
 		wlmm: &mut MessageManager,
 		wlim: &mut IdManager,
 	) -> Result<Self, Box<dyn Error>> {
 		let name = CString::new("wl-shm-1")?;
-		let id = shm.wl_create_pool(&name, wlmm, wlim)?;
-		Ok(Self::new(id, name, size))
+		let (id, fd) = shm.wl_create_pool(&name, size, wlmm, wlim)?;
+		Ok(Self::new(id, name, size, fd))
 	}
 
-	fn wl_release(
+	fn wl_create_buffer(
+		&self,
+		(offset, width, height, stride): (i32, i32, i32, i32),
+		format: PixelFormat,
+		wlmm: &mut MessageManager,
+		wlim: &mut IdManager,
+	) -> Result<u32, Box<dyn Error>> {
+		let id = wlim.new_id();
+		wlmm.send_request(&mut WireMessage {
+			sender_id: self.id,
+			opcode: 0,
+			args: vec![
+				WireArgument::NewId(id),
+				WireArgument::Int(offset),
+				WireArgument::Int(width),
+				WireArgument::Int(height),
+				WireArgument::Int(stride),
+				WireArgument::UnInt(format as u32),
+			],
+		})?;
+		Ok(id)
+	}
+
+	fn wl_destroy(
 		&self,
 		wlmm: &mut MessageManager,
+		wlim: &mut IdManager,
 	) -> Result<(), Box<dyn Error>> {
+		wlim.free_id(self.id);
 		wlmm.send_request(&mut WireMessage {
 			sender_id: self.id,
 			opcode: 1,
@@ -253,23 +287,53 @@ impl SharedMemoryPool {
 		}
 	}
 
-	pub fn destroy(&self, wlmm: &mut MessageManager, wlim: &mut IdManager) -> Result<(), Box<dyn Error>> {
-		self.wl_release(wlmm)?;
-		wlim.free_id(self.id);
+	pub fn destroy(
+		&self,
+		wlmm: &mut MessageManager,
+		wlim: &mut IdManager,
+	) -> Result<(), Box<dyn Error>> {
+		self.wl_destroy(wlmm, wlim)?;
 		Ok(self.unlink()?)
 	}
 }
 
-impl Drop for SharedMemoryPool {
-	fn drop(&mut self) {
-		panic!("called drop for SharedMemoryPool, use destroy");
-		// println!("called drop for SharedMemoryPool");
-		// if let Err(r) = self.unlink() {
-		// 	eprintln!("failed to drop SharedMemoryPool\n{:#?}", r);
-		// }
-	}
+pub struct Buffer {
+	id: u32,
+	pub offset: i32,
+	pub width: i32,
+	pub height: i32,
+	pub stride: i32,
+	pub format: PixelFormat,
 }
 
+impl Buffer {
+	pub fn new_initialized(
+		shm_pool: &mut SharedMemoryPool,
+		(offset, width, height, stride): (i32, i32, i32, i32),
+		format: PixelFormat,
+		wlmm: &mut MessageManager,
+		wlim: &mut IdManager,
+	) -> Result<Self, Box<dyn Error>> {
+		shm_pool.wl_create_buffer((offset, width, height, stride), format, wlmm, wlim)?;
+		let id = wlim.new_id();
+		Ok(Self {
+			id,
+			offset,
+			width,
+			height,
+			stride,
+			format,
+		})
+	}
+
+	fn wl_destroy(&self, wlmm: &mut MessageManager) -> Result<(), Box<dyn Error>> {
+		wlmm.send_request(&mut WireMessage {
+			sender_id: self.id,
+			opcode: 0,
+			args: vec![],
+		})
+	}
+}
 
 #[derive(PartialEq)]
 pub enum WaylandObjectKind {
@@ -341,3 +405,10 @@ impl fmt::Display for WaylandError {
 }
 
 impl Error for WaylandError {}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub enum PixelFormat {
+	Argb888,
+	Xrgb888,
+}
