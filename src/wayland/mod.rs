@@ -84,9 +84,10 @@ impl Registry {
 
 	fn wl_bind(
 		&mut self,
+		object: WaylandObjectKind,
+		version: u32,
 		wlmm: &mut MessageManager,
 		wlim: &mut IdManager,
-		object: WaylandObjectKind,
 	) -> Result<u32, Box<dyn Error>> {
 		let global_id = self
 			.inner
@@ -106,7 +107,7 @@ impl Registry {
 			args: vec![
 				WireArgument::UnInt(global_id),
 				// WireArgument::NewId(new_id),
-				WireArgument::NewIdSpecific(object.as_str(), 1, new_id),
+				WireArgument::NewIdSpecific(object.as_str(), version, new_id),
 			],
 		})?;
 
@@ -142,6 +143,10 @@ impl Registry {
 		}
 		Ok(())
 	}
+
+	pub fn does_implement(&self, query: &str) -> Option<u32> {
+		self.inner.iter().find(|(_, v)| v.interface == query).map(|(_, v)| v.version)
+	}
 }
 
 pub struct Compositor {
@@ -158,7 +163,7 @@ impl Compositor {
 		wlmm: &mut MessageManager,
 		wlim: &mut IdManager,
 	) -> Result<Self, Box<dyn Error>> {
-		let id = registry.wl_bind(wlmm, wlim, WaylandObjectKind::Compositor)?;
+		let id = registry.wl_bind(WaylandObjectKind::Compositor, 1, wlmm, wlim)?;
 		Ok(Self::new(id))
 	}
 
@@ -191,7 +196,7 @@ impl SharedMemory {
 		wlmm: &mut MessageManager,
 		wlim: &mut IdManager,
 	) -> Result<Self, Box<dyn Error>> {
-		let id = registry.wl_bind(wlmm, wlim, WaylandObjectKind::SharedMemory)?;
+		let id = registry.wl_bind(WaylandObjectKind::SharedMemory, 1, wlmm, wlim)?;
 		Ok(Self::new(id))
 	}
 
@@ -233,7 +238,7 @@ impl SharedMemoryPool {
 		Self { id, name, size, fd }
 	}
 
-	pub fn new_bound(
+	pub fn new_initialized(
 		shm: &mut SharedMemory,
 		size: i32,
 		wlmm: &mut MessageManager,
@@ -267,12 +272,7 @@ impl SharedMemoryPool {
 		Ok(id)
 	}
 
-	fn wl_destroy(
-		&self,
-		wlmm: &mut MessageManager,
-		wlim: &mut IdManager,
-	) -> Result<(), Box<dyn Error>> {
-		wlim.free_id(self.id);
+	fn wl_destroy(&self, wlmm: &mut MessageManager) -> Result<(), Box<dyn Error>> {
 		wlmm.send_request(&mut WireMessage {
 			sender_id: self.id,
 			opcode: 1,
@@ -294,7 +294,8 @@ impl SharedMemoryPool {
 		wlmm: &mut MessageManager,
 		wlim: &mut IdManager,
 	) -> Result<(), Box<dyn Error>> {
-		self.wl_destroy(wlmm, wlim)?;
+		self.wl_destroy(wlmm)?;
+		wlim.free_id(self.id);
 		Ok(self.unlink()?)
 	}
 }
@@ -316,8 +317,7 @@ impl Buffer {
 		wlmm: &mut MessageManager,
 		wlim: &mut IdManager,
 	) -> Result<Self, Box<dyn Error>> {
-		shm_pool.wl_create_buffer((offset, width, height, stride), format, wlmm, wlim)?;
-		let id = wlim.new_id();
+		let id = shm_pool.wl_create_buffer((offset, width, height, stride), format, wlmm, wlim)?;
 		Ok(Self {
 			id,
 			offset,
@@ -335,6 +335,16 @@ impl Buffer {
 			args: vec![],
 		})
 	}
+
+	pub fn destroy(
+		&self,
+		wlmm: &mut MessageManager,
+		wlim: &mut IdManager,
+	) -> Result<(), Box<dyn Error>> {
+		self.wl_destroy(wlmm)?;
+		wlim.free_id(self.id);
+		Ok(())
+	}
 }
 
 #[derive(PartialEq)]
@@ -346,6 +356,7 @@ pub enum WaylandObjectKind {
 	SharedMemory,
 	SharedMemoryPool,
 	Buffer,
+	XdgWmBase,
 }
 
 impl WaylandObjectKind {
@@ -358,6 +369,7 @@ impl WaylandObjectKind {
 			WaylandObjectKind::SharedMemory => "wl_shm",
 			WaylandObjectKind::SharedMemoryPool => "wl_shm_pool",
 			WaylandObjectKind::Buffer => "wl_buffer",
+			WaylandObjectKind::XdgWmBase => "xdg_wm_base",
 		}
 	}
 }
@@ -371,6 +383,7 @@ pub struct IdManager {
 impl IdManager {
 	fn new_id(&mut self) -> u32 {
 		self.top_id += 1;
+		println!("! idman ! new id picked: {}", self.top_id);
 		self.top_id
 	}
 
@@ -413,4 +426,33 @@ impl Error for WaylandError {}
 pub enum PixelFormat {
 	Argb888,
 	Xrgb888,
+}
+
+pub struct XdgWmBase {
+	id: u32,
+}
+
+impl XdgWmBase {
+	pub fn new_bound(
+		registry: &mut Registry,
+		wlmm: &mut MessageManager,
+		wlim: &mut IdManager,
+	) -> Result<Self, Box<dyn Error>> {
+		let id = registry.wl_bind(WaylandObjectKind::XdgWmBase, 1, wlmm, wlim)?;
+		Ok(Self { id })
+	}
+
+	fn wl_destroy(&self, wlmm: &mut MessageManager) -> Result<(), Box<dyn Error>> {
+		wlmm.send_request(&mut WireMessage {
+			sender_id: self.id,
+			opcode: 0,
+			args: vec![],
+		})
+	}
+
+	pub fn destroy(&self, wlmm: &mut MessageManager, wlim: &mut IdManager) -> Result<(), Box<dyn Error>> {
+		self.wl_destroy(wlmm)?;
+		wlim.free_id(self.id);
+		Ok(())
+	}
 }

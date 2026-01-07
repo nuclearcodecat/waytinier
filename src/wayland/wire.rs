@@ -2,7 +2,10 @@ use std::{
 	env,
 	error::Error,
 	io::{IoSlice, Read, Write},
-	os::{fd::RawFd, unix::net::{SocketAncillary, UnixStream}},
+	os::{
+		fd::RawFd,
+		unix::net::{SocketAncillary, UnixStream},
+	},
 	path::PathBuf,
 };
 
@@ -86,25 +89,38 @@ impl MessageManager {
 					buf.append(&mut Vec::from(len.to_ne_bytes()));
 					buf.append(x);
 					buf.resize(x.len() - (x.len() % 4) - 4, 0);
-				},
+				}
 				WireArgument::FileDescriptor(x) => {
 					fds.push(*x as RawFd);
-				},
+				}
 				_ => buf.append(&mut obj.as_vec_u8()),
 			}
 		}
 		let word2 = (buf.len() << 16) as u32 | (msg.opcode as u32 & 0x0000ffffu32);
-		println!("=== WORD2\n0b{:0b}\nlen: {}\nopcode: {}", word2, word2 >> 16, word2 & 0x0000ffff);
+		println!(
+			"=== WORD2\n0b{:0b}\nlen: {}\nopcode: {}",
+			word2,
+			word2 >> 16,
+			word2 & 0x0000ffff
+		);
 		let word2 = word2.to_ne_bytes();
 		for (en, ix) in (4..=7).enumerate() {
 			buf[ix] = word2[en];
-		};
+		}
 		let mut ancillary_buf = [0; 128];
 		let mut ancillary = SocketAncillary::new(&mut ancillary_buf);
 		ancillary.add_fds(&fds);
-		self.sock.send_vectored_with_ancillary(&[IoSlice::new(&buf)], &mut ancillary)?;
+		self.sock
+			.send_vectored_with_ancillary(&[IoSlice::new(&buf)], &mut ancillary)?;
 		// self.sock.write_all(&buf)?;
-		println!("=== REQUEST SENT\n{:#?}\n{:?}\nbuf len: {}\naux: {:?}\n\n", msg, buf, buf.len(), ancillary);
+		println!(
+			// "=== REQUEST SENT\n{:#?}\n{:?}\nbuf len: {}\naux: {:?}\n\n",
+			"=== REQUEST SENT\n{:#?}\n{:?}\nbuf len: {}\n\n",
+			msg,
+			buf,
+			buf.len(),
+			// ancillary
+		);
 		Ok(())
 	}
 
@@ -128,14 +144,12 @@ impl MessageManager {
 			Ok(l) => {
 				len = l;
 			}
-			Err(er) => {
-				match er.kind() {
-					std::io::ErrorKind::WouldBlock => return Ok(None),
-					_ => {
-						return Err(Box::new(er));
-					}
+			Err(er) => match er.kind() {
+				std::io::ErrorKind::WouldBlock => return Ok(None),
+				_ => {
+					return Err(Box::new(er));
 				}
-			}
+			},
 		}
 		Ok(Some(len))
 	}
@@ -176,10 +190,7 @@ impl MessageManager {
 				let obj_id = decode_event_payload(&b[cursor + 8..], WireArgumentKind::Obj)?;
 				let code = decode_event_payload(&b[cursor + 12..], WireArgumentKind::UnInt)?;
 				let message = decode_event_payload(&b[cursor + 16..], WireArgumentKind::String)?;
-				eprintln!(
-					"======== ERROR FIRED in wl_display\n{:?}",
-					message
-				);
+				eprintln!("======== ERROR FIRED in wl_display\n{:?}", message);
 				args.push(obj_id);
 				args.push(code);
 				args.push(message);
@@ -268,7 +279,7 @@ impl WireArgument {
 				complete.resize(complete.len() - (complete.len() % 4) + 4, 0);
 				// println!("complete len rn: {}", complete.len());
 				complete
-			},
+			}
 			WireArgument::Obj(x) => Vec::from(x.to_ne_bytes()),
 			WireArgument::NewId(x) => Vec::from(x.to_ne_bytes()),
 			WireArgument::NewIdSpecific(x, y, z) => {
@@ -282,7 +293,8 @@ impl WireArgument {
 				complete.push(0);
 				// println!("len: {}, complete: {:?}", complete.len(), complete);
 				// pad str
-				complete.resize(complete.len() - (complete.len() % 4) + 4, 0);
+				let clen = complete.len();
+				complete.resize(clen - (clen % 4) + (4 * (clen % 4).clamp(0, 1)), 0);
 				// println!("len: {}, complete: {:?}", complete.len(), complete);
 				complete.append(&mut Vec::from(y.to_ne_bytes()));
 				// println!("len: {}, complete: {:?}", complete.len(), complete);
@@ -290,7 +302,7 @@ impl WireArgument {
 				// println!("len: {}, complete: {:?}", complete.len(), complete);
 				// println!("complete len rn: {}", complete.len());
 				complete
-			},
+			}
 			WireArgument::Arr(_) => panic!("debil"),
 			WireArgument::FileDescriptor(x) => Vec::from(x.to_ne_bytes()),
 		}
