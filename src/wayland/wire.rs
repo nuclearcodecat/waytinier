@@ -1,7 +1,8 @@
 use std::{
+	collections::VecDeque,
 	env,
 	error::Error,
-	io::{IoSlice, Read, Write},
+	io::{IoSlice, Read},
 	os::{
 		fd::RawFd,
 		unix::net::{SocketAncillary, UnixStream},
@@ -9,11 +10,19 @@ use std::{
 	path::PathBuf,
 };
 
-use crate::wayland::{WaylandError, WaylandObjectKind};
+use crate::wayland::{IdentManager, WaylandError, WaylandObjectKind};
 
 #[derive(Debug)]
-pub struct WireMessage {
+pub struct WireRequest {
 	pub sender_id: u32,
+	pub opcode: usize,
+	pub args: Vec<WireArgument>,
+}
+
+#[derive(Debug)]
+pub struct WireEvent {
+	pub recv_id: u32,
+	pub recv_obj: WaylandObjectKind,
 	pub opcode: usize,
 	pub args: Vec<WireArgument>,
 }
@@ -48,6 +57,7 @@ pub enum WireArgumentKind {
 
 pub struct MessageManager {
 	pub sock: UnixStream,
+	pub q: VecDeque<WireEvent>,
 }
 
 impl Drop for MessageManager {
@@ -67,7 +77,10 @@ impl MessageManager {
 		base.push(sockname);
 		let sock = UnixStream::connect(base)?;
 		sock.set_nonblocking(true)?;
-		let wlmm = Self { sock };
+		let wlmm = Self {
+			sock,
+			q: VecDeque::new(),
+		};
 
 		Ok(wlmm)
 	}
@@ -76,7 +89,7 @@ impl MessageManager {
 		Ok(self.sock.shutdown(std::net::Shutdown::Both)?)
 	}
 
-	pub fn send_request(&mut self, msg: &mut WireMessage) -> Result<(), Box<dyn Error>> {
+	pub fn send_request(&mut self, msg: &mut WireRequest) -> Result<(), Box<dyn Error>> {
 		println!("==== SEND_REQUEST CALLED");
 		let mut buf: Vec<u8> = vec![];
 		buf.append(&mut Vec::from(msg.sender_id.to_ne_bytes()));
@@ -97,12 +110,7 @@ impl MessageManager {
 			}
 		}
 		let word2 = (buf.len() << 16) as u32 | (msg.opcode as u32 & 0x0000ffffu32);
-		println!(
-			"=== WORD2\n0b{:0b}\nlen: {}\nopcode: {}",
-			word2,
-			word2 >> 16,
-			word2 & 0x0000ffff
-		);
+		println!("=== WORD2\n0b{:0b}\nlen: {}\nopcode: {}", word2, word2 >> 16, word2 & 0x0000ffff);
 		let word2 = word2.to_ne_bytes();
 		for (en, ix) in (4..=7).enumerate() {
 			buf[ix] = word2[en];
@@ -110,8 +118,7 @@ impl MessageManager {
 		let mut ancillary_buf = [0; 128];
 		let mut ancillary = SocketAncillary::new(&mut ancillary_buf);
 		ancillary.add_fds(&fds);
-		self.sock
-			.send_vectored_with_ancillary(&[IoSlice::new(&buf)], &mut ancillary)?;
+		self.sock.send_vectored_with_ancillary(&[IoSlice::new(&buf)], &mut ancillary)?;
 		// self.sock.write_all(&buf)?;
 		println!(
 			// "=== REQUEST SENT\n{:#?}\n{:?}\nbuf len: {}\naux: {:?}\n\n",
@@ -122,20 +129,6 @@ impl MessageManager {
 			// ancillary
 		);
 		Ok(())
-	}
-
-	pub fn get_events_blocking(
-		&mut self,
-		id: u32,
-		kind: WaylandObjectKind,
-	) -> Result<Vec<WireMessage>, Box<dyn Error>> {
-		let mut read = self.get_events(id, &kind)?;
-		let mut retries = 0;
-		while read.is_none() && retries <= 1000 {
-			read = self.get_events(id, &kind)?;
-			retries += 1;
-		}
-		Ok(read.unwrap())
 	}
 
 	fn get_socket_data(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Box<dyn Error>> {
@@ -154,19 +147,14 @@ impl MessageManager {
 		Ok(Some(len))
 	}
 
-	pub fn get_events(
-		&mut self,
-		obj_id: u32,
-		kind: &WaylandObjectKind,
-	) -> Result<Option<Vec<WireMessage>>, Box<dyn Error>> {
+	pub fn get_events(&mut self, wlim: &mut IdentManager) -> Result<(), Box<dyn Error>> {
 		let mut b = [0; 8192];
 		let len = self.get_socket_data(&mut b)?;
 		if len.is_none() {
-			return Ok(None);
+			return Ok(());
 		}
 		let len = len.unwrap();
 
-		let mut events = vec![];
 		let mut cursor = 0;
 		let mut cursor_last = 0;
 		while cursor < len {
@@ -178,7 +166,6 @@ impl MessageManager {
 			let recv_len = byte2 >> 16;
 			// println!("len: {}", recv_len);
 			if recv_len < 8 {
-				eprintln!("recv_len bad");
 				return Err(WaylandError::RecvLenBad.boxed());
 			}
 			let opcode = (byte2 & 0x0000ffff) as usize;
@@ -195,12 +182,18 @@ impl MessageManager {
 				args.push(code);
 				args.push(message);
 			}
-			if sender_id == obj_id {
+
+			let kind = wlim.idmap.iter().find(|(x, _)| **x == sender_id).map(|(_, y)| y);
+			if let Some(kind) = kind {
 				match kind {
 					WaylandObjectKind::Display => match opcode {
 						1 => {
 							let deleted_id =
 								decode_event_payload(&b[cursor + 8..], WireArgumentKind::UnInt)?;
+							println!(
+								"==================== ID {:?} GOT DELETED (unimpl)",
+								deleted_id
+							);
 							args.push(deleted_id);
 						}
 						_ => {
@@ -228,21 +221,32 @@ impl MessageManager {
 							eprintln!("unimplemented registry event");
 						}
 					},
+					WaylandObjectKind::Callback => match opcode {
+						1 => {
+							let cbdata =
+								decode_event_payload(&b[cursor + 8..], WireArgumentKind::UnInt)?;
+							args.push(cbdata);
+						}
+						_ => {
+							eprintln!("invalid registry event");
+						}
+					},
 					_ => eprintln!("unimplemented interface"),
 				}
-			}
 
-			let event = WireMessage {
-				sender_id,
-				opcode,
-				args,
-			};
-			events.push(event);
+				let event = WireEvent {
+					recv_id: sender_id,
+					recv_obj: *kind,
+					opcode,
+					args,
+				};
+				self.q.push_back(event);
+			}
 
 			cursor = cursor_last + recv_len as usize;
 			cursor_last = cursor;
 		}
-		Ok(Some(events))
+		Ok(())
 	}
 }
 
@@ -319,12 +323,12 @@ fn decode_event_payload(
 		| WireArgumentKind::Obj
 		| WireArgumentKind::NewId
 		| WireArgumentKind::FileDescriptor
-		| WireArgumentKind::FixedPrecision => Ok(WireArgument::Int(i32::from_ne_bytes([
-			p[0], p[1], p[2], p[3],
-		]))),
-		WireArgumentKind::UnInt => Ok(WireArgument::UnInt(u32::from_ne_bytes([
-			p[0], p[1], p[2], p[3],
-		]))),
+		| WireArgumentKind::FixedPrecision => {
+			Ok(WireArgument::Int(i32::from_ne_bytes([p[0], p[1], p[2], p[3]])))
+		}
+		WireArgumentKind::UnInt => {
+			Ok(WireArgument::UnInt(u32::from_ne_bytes([p[0], p[1], p[2], p[3]])))
+		}
 		WireArgumentKind::String => {
 			let len = u32::from_ne_bytes([p[0], p[1], p[2], p[3]]) as usize;
 			let ix = p[4..4 + len]
@@ -333,9 +337,7 @@ fn decode_event_payload(
 				.find(|(_, c)| **c == b'\0')
 				.map(|(e, _)| e)
 				.unwrap_or_default();
-			Ok(WireArgument::String(String::from_utf8(
-				p[4..4 + ix].to_vec(),
-			)?))
+			Ok(WireArgument::String(String::from_utf8(p[4..4 + ix].to_vec())?))
 		}
 		// not sure how to handle this
 		WireArgumentKind::NewIdSpecific => {
