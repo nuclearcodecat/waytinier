@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, ffi::CString, fmt};
+use std::{collections::{HashMap, HashSet}, error::Error, ffi::CString, fmt};
 
 // std depends on libc anyway so i consider using it fair
 // i may replace this with asm in the future but that means amd64 only
@@ -71,7 +71,7 @@ impl Registry {
 		}
 	}
 
-	pub fn new_bound_filled(
+	pub fn new_filled(
 		display: &mut Display,
 		wlmm: &mut MessageManager,
 		wlim: &mut IdentManager,
@@ -87,6 +87,7 @@ impl Registry {
 
 			while let Some(msg) = wlmm.q.pop_front() {
 				if msg.recv_id == cbid {
+					println!("registry callback done");
 					done = true;
 					break;
 				} else if msg.recv_id == registry.id {
@@ -205,25 +206,58 @@ impl Compositor {
 	}
 }
 
+#[derive(Debug)]
 pub struct SharedMemory {
 	id: u32,
+	valid_pix_formats: HashSet<PixelFormat>,
 }
 
 impl SharedMemory {
 	pub fn new(id: u32) -> Self {
 		Self {
 			id,
+			valid_pix_formats: HashSet::new(),
 		}
 	}
 
-	pub fn new_bound(
+	fn push_pix_format(&mut self, pf: PixelFormat) {
+		self.valid_pix_formats.insert(pf);
+	}
+
+	pub fn new_bound_initialized(
+		display: &mut Display,
 		registry: &mut Registry,
 		wlmm: &mut MessageManager,
 		wlim: &mut IdentManager,
 	) -> Result<Self, Box<dyn Error>> {
 		let id = wlim.new_id_registered(WaylandObjectKind::SharedMemory);
 		registry.wl_bind(id, WaylandObjectKind::SharedMemory, 1, wlmm)?;
-		Ok(Self::new(id))
+		let mut shm = Self::new(id);
+
+		let cbid = display.wl_sync(wlmm, wlim)?;
+		wlmm.get_events(wlim)?;
+		let mut done = false;
+		while !done {
+			while let Some(msg) = wlmm.q.pop_front() {
+				if msg.recv_id == id {
+					for arg in msg.args {
+						if let WireArgument::UnInt(x) = arg {
+							let conv = PixelFormat::from_u32(x);
+							if let Ok(pf) = conv {
+								shm.push_pix_format(pf);
+							} else {
+								eprintln!("found unrecognized pixel format {:08x}", x);
+							}
+						}
+					}
+				} else if msg.recv_id == cbid {
+					done = true;
+				}
+			}
+		}
+
+		// println!("shm\n{:#?}", shm);
+		Ok(shm)
 	}
 
 	fn wl_create_pool(
@@ -435,6 +469,11 @@ impl IdentManager {
 		self.free.push(id);
 		Ok(())
 	}
+
+	// ugh
+	pub fn find_obj_by_id(&self, id: u32) -> Option<&WaylandObjectKind> {
+		self.idmap.iter().find(|(k, _)| **k == id).map(|(_, v)| v)
+	}
 }
 
 #[derive(Debug)]
@@ -443,6 +482,8 @@ pub enum WaylandError {
 	RecvLenBad,
 	NotInRegistry,
 	IdMapRemovalFail,
+	ObjectNonExistent,
+	InvalidPixelFormat,
 }
 
 impl WaylandError {
@@ -460,6 +501,8 @@ impl fmt::Display for WaylandError {
 				write!(f, "given name was not found in the registry hashmap")
 			}
 			WaylandError::IdMapRemovalFail => write!(f, "failed to remove from id man map"),
+			WaylandError::ObjectNonExistent => write!(f, "object non existent"),
+			WaylandError::InvalidPixelFormat => write!(f, "an invalid pixel format has been recved"),
 		}
 	}
 }
@@ -467,10 +510,20 @@ impl fmt::Display for WaylandError {
 impl Error for WaylandError {}
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PixelFormat {
 	Argb888,
 	Xrgb888,
+}
+
+impl PixelFormat {
+	pub fn from_u32(processee: u32) -> Result<PixelFormat, Box<dyn Error>> {
+		match processee {
+			0 => Ok(PixelFormat::Argb888),
+			1 => Ok(PixelFormat::Xrgb888),
+			_ => Err(WaylandError::InvalidPixelFormat.boxed()),
+		}
+	}
 }
 
 pub struct XdgWmBase {
@@ -479,12 +532,28 @@ pub struct XdgWmBase {
 
 impl XdgWmBase {
 	pub fn new_bound(
+		display: &mut Display,
 		registry: &mut Registry,
 		wlmm: &mut MessageManager,
 		wlim: &mut IdentManager,
 	) -> Result<Self, Box<dyn Error>> {
 		let id = wlim.new_id_registered(WaylandObjectKind::XdgWmBase);
 		registry.wl_bind(id, WaylandObjectKind::XdgWmBase, 1, wlmm)?;
+		let cbid = display.wl_sync(wlmm, wlim)?;
+
+		let mut done = false;
+		while !done {
+			wlmm.get_events(wlim)?;
+
+			while let Some(msg) = wlmm.q.pop_front() {
+				if msg.recv_id == cbid {
+					println!("xdg_wm_base callback done");
+					done = true;
+					break;
+				}
+			}
+		}
+
 		Ok(Self {
 			id,
 		})
@@ -498,8 +567,14 @@ impl XdgWmBase {
 		})
 	}
 
-	fn wl_pong(&self, wlmm: &mut MessageManager) -> Result<(), Box<dyn Error>> {
-		todo!()
+	pub fn wl_pong(&self, wlmm: &mut MessageManager, serial: u32) -> Result<(), Box<dyn Error>> {
+		wlmm.send_request(&mut WireRequest {
+			sender_id: self.id,
+			opcode: 3,
+			args: vec![
+				WireArgument::UnInt(serial),
+			],
+		})
 	}
 
 	pub fn destroy(

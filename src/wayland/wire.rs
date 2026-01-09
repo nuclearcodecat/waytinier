@@ -156,7 +156,6 @@ impl MessageManager {
 		let len = len.unwrap();
 
 		let mut cursor = 0;
-		let mut cursor_last = 0;
 		while cursor < len {
 			let sender_id =
 				u32::from_ne_bytes([b[cursor], b[cursor + 1], b[cursor + 2], b[cursor + 3]]);
@@ -222,16 +221,26 @@ impl MessageManager {
 						}
 					},
 					WaylandObjectKind::Callback => match opcode {
-						1 => {
+						0 => {
+							// let cbdata =
+							// 	decode_event_payload(&b[cursor + 8..], WireArgumentKind::UnInt)?;
+							// args.push(cbdata);
+						}
+						_ => {
+							eprintln!("invalid callback event");
+						}
+					},
+					WaylandObjectKind::SharedMemory => match opcode {
+						0 => {
 							let cbdata =
 								decode_event_payload(&b[cursor + 8..], WireArgumentKind::UnInt)?;
 							args.push(cbdata);
-						}
+						},
 						_ => {
-							eprintln!("invalid registry event");
+							eprintln!("invalid sharedmemory event");
 						}
-					},
-					_ => eprintln!("unimplemented interface"),
+					}
+					r => eprintln!("unimplemented interface {:?}", r),
 				}
 
 				let event = WireEvent {
@@ -241,10 +250,11 @@ impl MessageManager {
 					args,
 				};
 				self.q.push_back(event);
+			} else {
+				return Err(WaylandError::ObjectNonExistent.boxed());
 			}
 
-			cursor = cursor_last + recv_len as usize;
-			cursor_last = cursor;
+			cursor += recv_len as usize;
 		}
 		Ok(())
 	}
