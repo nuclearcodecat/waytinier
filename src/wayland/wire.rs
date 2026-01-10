@@ -235,11 +235,11 @@ impl MessageManager {
 							let cbdata =
 								decode_event_payload(&b[cursor + 8..], WireArgumentKind::UnInt)?;
 							args.push(cbdata);
-						},
+						}
 						_ => {
 							eprintln!("invalid sharedmemory event");
 						}
-					}
+					},
 					r => eprintln!("unimplemented interface {:?}", r),
 				}
 

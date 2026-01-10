@@ -1,4 +1,9 @@
-use std::{collections::{HashMap, HashSet}, error::Error, ffi::CString, fmt};
+use std::{
+	collections::{HashMap, HashSet},
+	error::Error,
+	ffi::CString,
+	fmt,
+};
 
 // std depends on libc anyway so i consider using it fair
 // i may replace this with asm in the future but that means amd64 only
@@ -187,22 +192,97 @@ impl Compositor {
 		wlim: &mut IdentManager,
 	) -> Result<Self, Box<dyn Error>> {
 		let id = wlim.new_id_registered(WaylandObjectKind::Compositor);
-		registry.wl_bind(id, WaylandObjectKind::Compositor, 1, wlmm)?;
+		registry.wl_bind(id, WaylandObjectKind::Compositor, 5, wlmm)?;
 		Ok(Self::new(id))
 	}
 
 	fn wl_create_surface(
 		&self,
+		id: u32,
 		wlmm: &mut MessageManager,
-		wlim: &mut IdentManager,
-	) -> Result<u32, Box<dyn Error>> {
-		let id = wlim.new_id_registered(WaylandObjectKind::Surface);
+	) -> Result<(), Box<dyn Error>> {
 		wlmm.send_request(&mut WireRequest {
 			sender_id: self.id,
 			opcode: 0,
 			args: vec![WireArgument::UnInt(id)],
-		})?;
-		Ok(id)
+		})
+	}
+
+	pub fn make_surface(
+		&self,
+		wlmm: &mut MessageManager,
+		wlim: &mut IdentManager,
+	) -> Result<Surface, Box<dyn Error>> {
+		let id = wlim.new_id_registered(WaylandObjectKind::Surface);
+		self.wl_create_surface(id, wlmm)?;
+		Ok(Surface {
+			id,
+			attached_buf: None,
+		})
+	}
+}
+
+pub struct Surface {
+	pub id: u32,
+	attached_buf: Option<u32>,
+}
+
+impl Surface {
+	fn wl_destroy(&self, wlmm: &mut MessageManager) -> Result<(), Box<dyn Error>> {
+		wlmm.send_request(&mut WireRequest {
+			sender_id: self.id,
+			opcode: 0,
+			args: vec![],
+		})
+	}
+
+	pub fn destroy(
+		&self,
+		wlmm: &mut MessageManager,
+		wlim: &mut IdentManager,
+	) -> Result<(), Box<dyn Error>> {
+		self.wl_destroy(wlmm)?;
+		wlim.free_id(self.id)?;
+		Ok(())
+	}
+
+	fn wl_attach(&self, buf_id: u32, wlmm: &mut MessageManager) -> Result<(), Box<dyn Error>> {
+		wlmm.send_request(&mut WireRequest {
+			sender_id: self.id,
+			opcode: 1,
+			args: vec![
+				WireArgument::Obj(buf_id),
+				WireArgument::UnInt(0),
+				WireArgument::UnInt(0),
+			],
+		})
+	}
+
+	pub fn attach_buffer(
+		&mut self,
+		to_att: u32,
+		wlmm: &mut MessageManager,
+	) -> Result<(), Box<dyn Error>> {
+		self.attached_buf = Some(to_att);
+		self.wl_attach(to_att, wlmm)
+	}
+
+	fn wl_commit(
+		&self,
+		wlmm: &mut MessageManager
+	) -> Result<(), Box<dyn Error>> {
+		wlmm.send_request(&mut WireRequest {
+			sender_id: self.id,
+			opcode: 6,
+			args: vec![],
+		})
+	}
+
+	pub fn commmit(
+		&self,
+		wlmm: &mut MessageManager
+	) -> Result<(), Box<dyn Error>> {
+		self.wl_commit(wlmm)
 	}
 }
 
@@ -366,7 +446,7 @@ impl SharedMemoryPool {
 }
 
 pub struct Buffer {
-	id: u32,
+	pub id: u32,
 	pub offset: i32,
 	pub width: i32,
 	pub height: i32,
@@ -423,6 +503,8 @@ pub enum WaylandObjectKind {
 	SharedMemoryPool,
 	Buffer,
 	XdgWmBase,
+	XdgSurface,
+	XdgTopLevel,
 }
 
 impl WaylandObjectKind {
@@ -437,6 +519,8 @@ impl WaylandObjectKind {
 			WaylandObjectKind::SharedMemoryPool => "wl_shm_pool",
 			WaylandObjectKind::Buffer => "wl_buffer",
 			WaylandObjectKind::XdgWmBase => "xdg_wm_base",
+			WaylandObjectKind::XdgSurface => "xdg_surface",
+			WaylandObjectKind::XdgTopLevel => "xdg_toplevel",
 		}
 	}
 }
@@ -502,7 +586,9 @@ impl fmt::Display for WaylandError {
 			}
 			WaylandError::IdMapRemovalFail => write!(f, "failed to remove from id man map"),
 			WaylandError::ObjectNonExistent => write!(f, "object non existent"),
-			WaylandError::InvalidPixelFormat => write!(f, "an invalid pixel format has been recved"),
+			WaylandError::InvalidPixelFormat => {
+				write!(f, "an invalid pixel format has been recved")
+			}
 		}
 	}
 }
@@ -571,9 +657,7 @@ impl XdgWmBase {
 		wlmm.send_request(&mut WireRequest {
 			sender_id: self.id,
 			opcode: 3,
-			args: vec![
-				WireArgument::UnInt(serial),
-			],
+			args: vec![WireArgument::UnInt(serial)],
 		})
 	}
 
@@ -586,4 +670,66 @@ impl XdgWmBase {
 		wlim.free_id(self.id)?;
 		Ok(())
 	}
+
+	fn wl_get_xdg_surface(
+		&self,
+		wl_surface_id: u32,
+		wlmm: &mut MessageManager,
+		wlim: &mut IdentManager,
+	) -> Result<u32, Box<dyn Error>> {
+		let xdg_surface_id = wlim.new_id_registered(WaylandObjectKind::XdgSurface);
+		wlmm.send_request(&mut WireRequest {
+			sender_id: self.id,
+			opcode: 2,
+			args: vec![WireArgument::NewId(xdg_surface_id), WireArgument::Obj(wl_surface_id)],
+		})?;
+		Ok(xdg_surface_id)
+	}
+
+	pub fn make_xdg_surface_from_wl_surface(
+		&self,
+		wl_surface_id: u32,
+		wlmm: &mut MessageManager,
+		wlim: &mut IdentManager,
+	) -> Result<XdgSurface, Box<dyn Error>> {
+		let id = self.wl_get_xdg_surface(wl_surface_id, wlmm, wlim)?;
+		Ok(XdgSurface {
+			id,
+		})
+	}
+}
+
+pub struct XdgSurface {
+	id: u32,
+}
+
+impl XdgSurface {
+	fn wl_get_toplevel(
+		&self,
+		wlmm: &mut MessageManager,
+		wlim: &mut IdentManager,
+	) -> Result<u32, Box<dyn Error>> {
+		let xdg_toplevel_id = wlim.new_id_registered(WaylandObjectKind::XdgSurface);
+		wlmm.send_request(&mut WireRequest {
+			sender_id: self.id,
+			opcode: 1,
+			args: vec![WireArgument::NewId(xdg_toplevel_id)],
+		})?;
+		Ok(xdg_toplevel_id)
+	}
+
+	pub fn make_xdg_toplevel(
+		&self,
+		wlmm: &mut MessageManager,
+		wlim: &mut IdentManager,
+	) -> Result<XdgTopLevel, Box<dyn Error>> {
+		let id = self.wl_get_toplevel(wlmm, wlim)?;
+		Ok(XdgTopLevel {
+			id,
+		})
+	}
+}
+
+pub struct XdgTopLevel {
+	id: u32,
 }
