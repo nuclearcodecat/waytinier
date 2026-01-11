@@ -1,11 +1,15 @@
-use std::{collections::HashMap, error::Error};
+use std::{cell::RefCell, collections::HashMap, error::Error, rc::Rc};
 
-use crate::wayland::{CtxType, WaylandError, WaylandObjectKind, display::Display, wire::{Id, WireArgument, WireEventRaw, WireRequest}};
+use crate::wayland::{
+	CtxType, OpCode, RcCell, WaylandError, WaylandObject, WaylandObjectKind,
+	display::Display,
+	wire::{FromWirePayload, Id, WireArgument, WireRequest},
+};
 
 pub struct Registry {
-	id: Id,
-	inner: HashMap<u32, RegistryEntry>,
-	ctx: CtxType,
+	pub id: Id,
+	pub(crate) inner: HashMap<u32, RegistryEntry>,
+	pub(crate) ctx: CtxType,
 }
 
 #[derive(PartialEq, Eq, Hash, Debug)]
@@ -23,35 +27,7 @@ impl Registry {
 		}
 	}
 
-	pub fn new_filled(
-		display: &mut Display,
-		ctx: CtxType,
-	) -> Result<Self, Box<dyn Error>> {
-		let reg_id = display.wl_get_registry()?;
-		let cbid = display.wl_sync()?;
-
-		let mut events = vec![];
-		let mut done = false;
-		while !done {
-			ctx.borrow_mut().wlmm.get_events()?;
-
-			while let Some(msg) = ctx.borrow_mut().wlmm.q.pop_front() {
-				if msg.recv_id == cbid {
-					println!("registry callback done");
-					done = true;
-					break;
-				} else if msg.recv_id == reg_id {
-					events.push(msg);
-				}
-			}
-		}
-
-		let mut registry = Self::new_empty(reg_id, ctx);
-		registry.fill(&events)?;
-		Ok(registry)
-	}
-
-	pub(super) fn wl_bind(
+	fn wl_bind(
 		&mut self,
 		id: Id,
 		object: WaylandObjectKind,
@@ -80,42 +56,46 @@ impl Registry {
 		Ok(())
 	}
 
-	pub fn fill(&mut self, events: &[WireEventRaw]) -> Result<(), Box<dyn Error>> {
-		for e in events {
-			if e.recv_id != self.id {
-				continue;
-			};
-			let name;
-			let interface;
-			let version;
-			if let WireArgument::UnInt(name_) = e.args[0] {
-				name = name_;
-			} else {
-				return Err(WaylandError::ParseError.boxed());
-			};
-			if let WireArgument::String(interface_) = &e.args[1] {
-				interface = interface_.clone();
-			} else {
-				return Err(WaylandError::ParseError.boxed());
-			};
-			if let WireArgument::UnInt(version_) = e.args[2] {
-				version = version_;
-			} else {
-				return Err(WaylandError::ParseError.boxed());
-			};
-
-			self.inner.insert(
-				name,
-				RegistryEntry {
-					interface,
-					version,
-				},
-			);
-		}
+	pub(crate) fn bind(
+		&mut self,
+		id: Id,
+		object: WaylandObjectKind,
+		version: u32,
+	) -> Result<(), Box<dyn Error>> {
+		self.wl_bind(id, object, version)?;
 		Ok(())
 	}
 
 	pub fn does_implement(&self, query: &str) -> Option<u32> {
 		self.inner.iter().find(|(_, v)| v.interface == query).map(|(_, v)| v.version)
+	}
+}
+
+impl WaylandObject for Registry {
+	fn handle(&mut self, opcode: OpCode, payload: &[u8]) -> Result<(), Box<dyn Error>> {
+		let p = payload;
+		match opcode {
+			0 => {
+				let name = u32::from_wire(&p[8..])?;
+				let interface = String::from_wire(&p[12..])?;
+				let version = u32::from_wire(&p[..p.len() - 4])?;
+				self.inner.insert(
+					name,
+					RegistryEntry {
+						interface,
+						version,
+					},
+				);
+			}
+			// can global_remove even happen
+			1 => {
+				// let name = decode_event_payload(&p[8..], WireArgumentKind::UnInt)?;
+				todo!()
+			}
+			_ => {
+				eprintln!("invalid registry event");
+			}
+		};
+		Ok(())
 	}
 }

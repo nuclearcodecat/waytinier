@@ -171,7 +171,7 @@ impl MessageManager {
 			}
 			let opcode = (byte2 & 0x0000ffff) as usize;
 
-			let payload = Vec::from(&b[cursor .. cursor + recv_len as usize]);
+			let payload = Vec::from(&b[cursor..cursor + recv_len as usize]);
 
 			let event = WireEventRaw {
 				recv_id: sender_id,
@@ -249,54 +249,27 @@ impl WireArgument {
 	}
 }
 
-pub fn decode_event_payload(
-	payload: &[u8],
-	kind: WireArgumentKind,
-) -> Result<WireArgument, Box<dyn Error>> {
-	let p = payload;
-	match kind {
-		WireArgumentKind::Int
-		| WireArgumentKind::Obj
-		| WireArgumentKind::NewId
-		| WireArgumentKind::FileDescriptor
-		| WireArgumentKind::FixedPrecision => {
-			Ok(WireArgument::Int(i32::from_ne_bytes([p[0], p[1], p[2], p[3]])))
-		}
-		WireArgumentKind::UnInt => {
-			Ok(WireArgument::UnInt(u32::from_ne_bytes([p[0], p[1], p[2], p[3]])))
-		}
-		WireArgumentKind::String => {
-			let len = u32::from_ne_bytes([p[0], p[1], p[2], p[3]]) as usize;
-			let ix = p[4..4 + len]
-				.iter()
-				.enumerate()
-				.find(|(_, c)| **c == b'\0')
-				.map(|(e, _)| e)
-				.unwrap_or_default();
-			Ok(WireArgument::String(String::from_utf8(p[4..4 + ix].to_vec())?))
-		}
-		// not sure how to handle this
-		WireArgumentKind::NewIdSpecific => {
-			// let nulterm = p
-			// 	.iter()
-			// 	.enumerate()
-			// 	.find(|(_, c)| **c == b'\0')
-			// 	.map(|(e, _)| e);
-			// if let Some(pos) = nulterm {
-			// 	let slice = &p[0..pos];
-			// 	let str_ = str::from_utf8(slice)?;
-			// 	let version = u32::from_ne_bytes([p[pos], p[pos + 1], p[pos + 2], p[pos + 3]]);
-			// 	let new_id = u32::from_ne_bytes([p[pos + 4], p[pos + 5], p[pos + 6], p[pos + 7]]);
-			// 	Ok(WireArgument::NewIdSpecific(
-			// 		str_.to_string(),
-			// 		version,
-			// 		new_id,
-			// 	))
-			// } else {
-			// 	Err(())
-			// }
-			todo!()
-		}
-		WireArgumentKind::Arr => Ok(WireArgument::Arr(payload.to_vec())),
+pub trait FromWirePayload: Sized {
+	fn from_wire(payload: &[u8]) -> Result<Self, Box<dyn Error>>;
+}
+
+impl FromWirePayload for String {
+	fn from_wire(payload: &[u8]) -> Result<Self, Box<dyn Error>> {
+		let p = payload;
+		let len = u32::from_ne_bytes([p[0], p[1], p[2], p[3]]) as usize;
+		let ix = p[4..4 + len]
+			.iter()
+			.enumerate()
+			.find(|(_, c)| **c == b'\0')
+			.map(|(e, _)| e)
+			.unwrap_or_default();
+		Ok(String::from_utf8(p[4..4 + ix].to_vec())?)
+	}
+}
+
+impl FromWirePayload for u32 {
+	fn from_wire(payload: &[u8]) -> Result<Self, Box<dyn Error>> {
+		let p = payload;
+		Ok(u32::from_ne_bytes([p[0], p[1], p[2], p[3]]))
 	}
 }

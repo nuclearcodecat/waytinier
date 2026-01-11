@@ -1,14 +1,13 @@
-use std::{
-	cell::RefCell, collections::HashMap, error::Error, fmt, rc::Rc
-};
 use crate::wayland::wire::{Id, MessageManager};
-pub mod wire;
+use std::{cell::RefCell, collections::HashMap, error::Error, fmt, rc::Rc};
+pub mod callback;
+pub mod compositor;
 pub mod display;
 pub mod registry;
-pub mod compositor;
-pub mod surface;
 pub mod shm;
+pub mod surface;
 pub mod buffer;
+pub mod wire;
 pub mod xdgshell;
 
 pub type OpCode = u32;
@@ -33,8 +32,7 @@ impl Context {
 	}
 
 	fn serialize_events(&mut self) -> Result<(), Box<dyn Error>> {
-		while let Some(ev) =  self.wlmm.q.pop_front() {
-		}
+		while let Some(ev) = self.wlmm.q.pop_front() {}
 		todo!()
 	}
 }
@@ -72,11 +70,15 @@ impl WaylandObjectKind {
 	}
 }
 
+// wayland trait object
+pub type Wlto = Rc<RefCell<dyn WaylandObject>>;
+pub type RcCell<T> = Rc<RefCell<T>>;
+
 #[derive(Default)]
 pub struct IdentManager {
 	top_id: Id,
 	free: Vec<Id>,
-	idmap: HashMap<Id, (WaylandObjectKind, Rc<RefCell<dyn WaylandObject>>)>,
+	idmap: HashMap<Id, (WaylandObjectKind, Wlto)>,
 }
 
 impl IdentManager {
@@ -86,9 +88,9 @@ impl IdentManager {
 		self.top_id
 	}
 
-	fn new_id_registered(&mut self, kind: WaylandObjectKind) -> Id {
+	fn new_id_registered(&mut self, kind: WaylandObjectKind, obj: Wlto) -> Id {
 		let id = self.new_id();
-		self.idmap.insert(id, kind);
+		self.idmap.insert(id, (kind, obj));
 		id
 	}
 
@@ -102,8 +104,12 @@ impl IdentManager {
 	}
 
 	// ugh
-	pub fn find_obj_by_id(&self, id: Id) -> Option<&WaylandObjectKind> {
+	pub fn find_obj_by_id(&self, id: Id) -> Option<&(WaylandObjectKind, Wlto)> {
 		self.idmap.iter().find(|(k, _)| **k == id).map(|(_, v)| v)
+	}
+
+	pub fn find_obj_kind_by_id(&self, id: Id) -> Option<WaylandObjectKind> {
+		self.idmap.iter().find(|(k, _)| **k == id).map(|(_, v)| v.0)
 	}
 }
 

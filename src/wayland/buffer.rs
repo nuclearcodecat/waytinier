@@ -1,6 +1,10 @@
 use std::error::Error;
 
-use crate::wayland::{CtxType, shm::PixelFormat, wire::{Id, WireRequest}};
+use crate::wayland::{
+	CtxType, WaylandObject,
+	shm::PixelFormat,
+	wire::{Id, WireRequest},
+};
 
 pub struct Buffer {
 	pub id: Id,
@@ -21,12 +25,15 @@ impl Buffer {
 		})
 	}
 
-	pub fn destroy(
-		&self,
-	) -> Result<(), Box<dyn Error>> {
+	pub fn destroy(&self) -> Result<(), Box<dyn Error>> {
 		self.wl_destroy()?;
 		self.ctx.borrow_mut().wlim.free_id(self.id)?;
 		Ok(())
 	}
 }
 
+impl WaylandObject for Buffer {
+	fn handle(&mut self, opcode: super::OpCode, payload: &[u8]) -> Result<(), Box<dyn Error>> {
+		todo!()
+	}
+}

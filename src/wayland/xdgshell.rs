@@ -1,6 +1,8 @@
-use std::error::Error;
+use std::{cell::RefCell, error::Error, rc::Rc};
 
-use crate::wayland::{CtxType, WaylandObjectKind, display::Display, registry::Registry, wire::{Id, WireArgument, WireRequest}};
+use crate::wayland::{
+	CtxType, RcCell, WaylandObject, WaylandObjectKind, registry::Registry, wire::{Id, WireArgument, WireRequest}
+};
 
 pub struct XdgWmBase {
 	pub id: Id,
@@ -9,31 +11,16 @@ pub struct XdgWmBase {
 
 impl XdgWmBase {
 	pub fn new_bound(
-		display: &mut Display,
 		registry: &mut Registry,
-		ctx: CtxType,
-	) -> Result<Self, Box<dyn Error>> {
-		let id = ctx.borrow_mut().wlim.new_id_registered(WaylandObjectKind::XdgWmBase);
-		registry.wl_bind(id, WaylandObjectKind::XdgWmBase, 1)?;
-		let cbid = display.wl_sync()?;
-
-		let mut done = false;
-		while !done {
-			ctx.borrow_mut().wlmm.get_events()?;
-
-			while let Some(msg) = ctx.borrow_mut().wlmm.q.pop_front() {
-				if msg.recv_id == cbid {
-					println!("xdg_wm_base callback done");
-					done = true;
-					break;
-				}
-			}
-		}
-
-		Ok(Self {
-			id,
-			ctx
-		})
+	) -> Result<RcCell<Self>, Box<dyn Error>> {
+		let obj = Rc::new(RefCell::new(Self { id: 0, ctx: registry.ctx.clone() }));
+		let id = registry.ctx.borrow_mut().wlim.new_id_registered(
+			WaylandObjectKind::XdgWmBase,
+			obj.clone()
+		);
+		obj.borrow_mut().id = id;
+		registry.bind(id, WaylandObjectKind::XdgWmBase, 1)?;
+		Ok(obj)
 	}
 
 	pub(crate) fn wl_destroy(&self) -> Result<(), Box<dyn Error>> {
@@ -52,9 +39,7 @@ impl XdgWmBase {
 		})
 	}
 
-	pub fn destroy(
-		&self,
-	) -> Result<(), Box<dyn Error>> {
+	pub fn destroy(&self) -> Result<(), Box<dyn Error>> {
 		self.wl_destroy()?;
 		self.ctx.borrow_mut().wlim.free_id(self.id)?;
 		Ok(())
@@ -64,25 +49,23 @@ impl XdgWmBase {
 		&self,
 		wl_surface_id: Id,
 		xdg_surface_id: Id,
-	) -> Result<u32, Box<dyn Error>> {
+	) -> Result<(), Box<dyn Error>> {
 		self.ctx.borrow().wlmm.send_request(&mut WireRequest {
 			sender_id: self.id,
 			opcode: 2,
 			args: vec![WireArgument::NewId(xdg_surface_id), WireArgument::Obj(wl_surface_id)],
-		})?;
-		Ok(xdg_surface_id)
+		})
 	}
 
-	pub fn make_xdg_surface(
-		&self,
-		wl_surface_id: Id,
-	) -> Result<XdgSurface, Box<dyn Error>> {
-		let xdg_surface_id = self.ctx.borrow_mut().wlim.new_id_registered(WaylandObjectKind::XdgSurface);
-		let id = self.wl_get_xdg_surface(wl_surface_id, xdg_surface_id)?;
-		Ok(XdgSurface {
-			id,
-			ctx: self.ctx.clone(),
-		})
+	pub fn make_xdg_surface(&self, wl_surface_id: Id) -> Result<RcCell<XdgSurface>, Box<dyn Error>> {
+		let xdgs = Rc::new(RefCell::new(XdgSurface { id: 0, ctx: self.ctx.clone() }));
+		let id = self.ctx.borrow_mut().wlim.new_id_registered(
+			WaylandObjectKind::XdgSurface,
+			xdgs.clone(),
+		);
+		self.wl_get_xdg_surface(wl_surface_id, id)?;
+		xdgs.borrow_mut().id = id;
+		Ok(xdgs)
 	}
 }
 
@@ -92,10 +75,7 @@ pub struct XdgSurface {
 }
 
 impl XdgSurface {
-	pub(crate) fn wl_get_toplevel(
-		&self,
-		xdg_toplevel_id: Id,
-	) -> Result<(), Box<dyn Error>> {
+	pub(crate) fn wl_get_toplevel(&self, xdg_toplevel_id: Id) -> Result<(), Box<dyn Error>> {
 		self.ctx.borrow().wlmm.send_request(&mut WireRequest {
 			sender_id: self.id,
 			opcode: 1,
@@ -103,19 +83,37 @@ impl XdgSurface {
 		})
 	}
 
-	pub fn make_xdg_toplevel(
-		&self,
-	) -> Result<XdgTopLevel, Box<dyn Error>> {
-		let id = self.ctx.borrow_mut().wlim.new_id_registered(WaylandObjectKind::XdgTopLevel);
+	pub fn make_xdg_toplevel(&self) -> Result<RcCell<XdgTopLevel>, Box<dyn Error>> {
+		let xdgtl = Rc::new(RefCell::new(XdgTopLevel { id: 0, ctx: self.ctx.clone() }));
+		let id = self.ctx.borrow_mut().wlim.new_id_registered(
+			WaylandObjectKind::XdgTopLevel,
+			xdgtl.clone(),
+		);
 		self.wl_get_toplevel(id)?;
-		Ok(XdgTopLevel {
-			id,
-			ctx: self.ctx.clone(),
-		})
+		xdgtl.borrow_mut().id = id;
+		Ok(xdgtl)
 	}
 }
 
 pub struct XdgTopLevel {
 	pub id: Id,
 	ctx: CtxType,
+}
+
+impl WaylandObject for XdgWmBase {
+	fn handle(&mut self, opcode: super::OpCode, payload: &[u8]) -> Result<(), Box<dyn Error>> {
+		todo!()
+	}
+}
+
+impl WaylandObject for XdgSurface {
+	fn handle(&mut self, opcode: super::OpCode, payload: &[u8]) -> Result<(), Box<dyn Error>> {
+		todo!()
+	}
+}
+
+impl WaylandObject for XdgTopLevel {
+	fn handle(&mut self, opcode: super::OpCode, payload: &[u8]) -> Result<(), Box<dyn Error>> {
+		todo!()
+	}
 }
