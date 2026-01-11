@@ -149,15 +149,16 @@ impl MessageManager {
 		Ok(Some(len))
 	}
 
-	pub fn get_events(&mut self) -> Result<(), Box<dyn Error>> {
+	pub fn get_events(&mut self) -> Result<usize, Box<dyn Error>> {
 		let mut b = [0; 8192];
 		let len = self.get_socket_data(&mut b)?;
 		if len.is_none() {
-			return Ok(());
+			return Ok(0);
 		}
 		let len = len.unwrap();
 
 		let mut cursor = 0;
+		let mut ctr = 0;
 		while cursor < len {
 			let sender_id =
 				u32::from_ne_bytes([b[cursor], b[cursor + 1], b[cursor + 2], b[cursor + 3]]);
@@ -179,10 +180,11 @@ impl MessageManager {
 				payload,
 			};
 			self.q.push_back(event);
+			ctr += 1;
 
 			cursor += recv_len as usize;
 		}
-		Ok(())
+		Ok(ctr)
 	}
 }
 

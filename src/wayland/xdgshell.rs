@@ -1,7 +1,7 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
 use crate::wayland::{
-	CtxType, RcCell, WaylandObject, WaylandObjectKind, registry::Registry, wire::{Id, WireArgument, WireRequest}
+	CtxType, RcCell, WaylandError, WaylandObject, WaylandObjectKind, registry::Registry, wire::{Id, WireArgument, WireRequest}
 };
 
 pub struct XdgWmBase {
@@ -114,6 +114,24 @@ impl WaylandObject for XdgSurface {
 
 impl WaylandObject for XdgTopLevel {
 	fn handle(&mut self, opcode: super::OpCode, payload: &[u8]) -> Result<(), Box<dyn Error>> {
-		todo!()
+		match opcode {
+			// configure
+			0 => {
+				todo!()
+			}
+			1 => {
+				todo!()
+			}
+			2 => {
+				todo!()
+			}
+			3 => {
+				todo!()
+			}
+			inv => {
+				eprintln!("invalid xdg_toplevel opcode {}", inv);
+				Err(WaylandError::InvalidOpCode.boxed())
+			}
+		}
 	}
 }

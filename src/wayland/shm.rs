@@ -72,7 +72,7 @@ impl SharedMemory {
 			.wlim
 			.new_id_registered(WaylandObjectKind::SharedMemoryPool, shmpool.clone());
 		shmpool.borrow_mut().id = id;
-		self.wl_create_pool(size, fd, id);
+		self.wl_create_pool(size, fd, id)?;
 		Ok(shmpool)
 	}
 

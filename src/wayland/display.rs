@@ -81,7 +81,7 @@ impl WaylandObject for Display {
 				// 	"==================== ID {:?} GOT DELETED (unimpl)",
 				// 	deleted_id
 				// );
-				self.ctx.borrow_mut().wlim.free_id(deleted_id);
+				self.ctx.borrow_mut().wlim.free_id(deleted_id)?;
 			}
 			_ => {
 				eprintln!("invalid display event");

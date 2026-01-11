@@ -10,9 +10,9 @@ pub mod buffer;
 pub mod wire;
 pub mod xdgshell;
 
-pub type OpCode = u32;
+pub type OpCode = usize;
 
-trait WaylandObject {
+pub trait WaylandObject {
 	fn handle(&mut self, opcode: OpCode, payload: &[u8]) -> Result<(), Box<dyn Error>>;
 }
 
@@ -31,9 +31,15 @@ impl Context {
 		}
 	}
 
-	fn serialize_events(&mut self) -> Result<(), Box<dyn Error>> {
-		while let Some(ev) = self.wlmm.q.pop_front() {}
-		todo!()
+	pub fn serialize_events(&mut self) -> Result<(), Box<dyn Error>> {
+		println!("serializer called");
+		while self.wlmm.get_events()? == 0 {};
+		while let Some(ev) = self.wlmm.q.pop_front() {
+			let obj = self.wlim.find_obj_by_id(ev.recv_id).ok_or(WaylandError::ObjectNonExistent)?;
+			println!("going to handle {:?}", obj.0);
+			obj.1.borrow_mut().handle(ev.opcode, &ev.payload)?;
+		};
+		Ok(())
 	}
 }
 
@@ -71,7 +77,7 @@ impl WaylandObjectKind {
 }
 
 // wayland trait object
-pub type Wlto = Rc<RefCell<dyn WaylandObject>>;
+type Wlto = Rc<RefCell<dyn WaylandObject>>;
 pub type RcCell<T> = Rc<RefCell<T>>;
 
 #[derive(Default)]
@@ -121,6 +127,7 @@ pub enum WaylandError {
 	IdMapRemovalFail,
 	ObjectNonExistent,
 	InvalidPixelFormat,
+	InvalidOpCode,
 }
 
 impl WaylandError {
@@ -134,14 +141,11 @@ impl fmt::Display for WaylandError {
 		match self {
 			WaylandError::ParseError => write!(f, "parse error"),
 			WaylandError::RecvLenBad => write!(f, "received len is bad"),
-			WaylandError::NotInRegistry => {
-				write!(f, "given name was not found in the registry hashmap")
-			}
+			WaylandError::NotInRegistry => write!(f, "given name was not found in the registry hashmap"),
 			WaylandError::IdMapRemovalFail => write!(f, "failed to remove from id man map"),
 			WaylandError::ObjectNonExistent => write!(f, "object non existent"),
-			WaylandError::InvalidPixelFormat => {
-				write!(f, "an invalid pixel format has been recved")
-			}
+			WaylandError::InvalidPixelFormat => write!(f, "an invalid pixel format has been received"),
+			WaylandError::InvalidOpCode => write!(f, "an invalid opcode has been received"),
 		}
 	}
 }
