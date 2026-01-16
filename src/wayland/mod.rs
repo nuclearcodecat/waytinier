@@ -1,4 +1,7 @@
-use crate::wayland::wire::{Id, MessageManager, WireRequest};
+use crate::wayland::{
+	wire::{Id, MessageManager, WireRequest},
+	xdgshell::XdgSurface,
+};
 use std::{
 	cell::RefCell,
 	collections::HashMap,
@@ -52,6 +55,7 @@ pub(crate) enum EventAction {
 	IdDeletion(Id),
 	Error(Box<dyn Error>),
 	DebugMessage(DebugLevel, String),
+	Resize(i32, i32),
 }
 
 pub(crate) trait WaylandObject {
@@ -68,6 +72,7 @@ pub type CtxType = Rc<RefCell<Context>>;
 pub struct Context {
 	wlmm: MessageManager,
 	wlim: IdentManager,
+	xdg_surface: Option<RcCell<XdgSurface>>,
 }
 
 impl Context {
@@ -75,6 +80,7 @@ impl Context {
 		Self {
 			wlmm,
 			wlim,
+			xdg_surface: None,
 		}
 	}
 
@@ -85,8 +91,7 @@ impl Context {
 		}
 		let mut actions: Vec<EventAction> = vec![];
 		while let Some(ev) = self.wlmm.q.pop_front() {
-			let obj =
-				self.wlim.find_obj_by_id(ev.recv_id).ok_or(WaylandError::ObjectNonExistent)?;
+			let obj = self.wlim.find_obj_by_id(ev.recv_id)?;
 			println!("going to handle {:?}", obj.0);
 			let mut x = obj.1.borrow_mut().handle(ev.opcode, &ev.payload)?;
 			actions.append(&mut x);
@@ -103,6 +108,14 @@ impl Context {
 				EventAction::Error(er) => eprintln!("{:?}", er),
 				// add colors
 				EventAction::DebugMessage(_, msg) => println!("{msg}"),
+				EventAction::Resize(w, h) => {
+					let xdgs = self.xdg_surface.clone().ok_or(WaylandError::ObjectNonExistent)?;
+					let xdgs = xdgs.borrow_mut();
+					let surf = xdgs.wl_surface.borrow_mut();
+					let buf = surf.attached_buf.clone().ok_or(WaylandError::ObjectNonExistent)?;
+					let mut buf = buf.borrow_mut();
+					buf.resize((w, h))?;
+				}
 			};
 		}
 		Ok(())
@@ -176,12 +189,31 @@ impl IdentManager {
 	}
 
 	// ugh
-	pub(crate) fn find_obj_by_id(&self, id: Id) -> Option<&(WaylandObjectKind, Wlto)> {
-		self.idmap.iter().find(|(k, _)| **k == id).map(|(_, v)| v)
+	pub(crate) fn find_obj_by_id(
+		&self,
+		id: Id,
+	) -> Result<&(WaylandObjectKind, Wlto), WaylandError> {
+		self.idmap
+			.iter()
+			.find(|(k, _)| **k == id)
+			.map(|(_, v)| v)
+			.ok_or_else(|| WaylandError::ObjectNonExistent)
 	}
 
-	pub(crate) fn find_obj_kind_by_id(&self, id: Id) -> Option<WaylandObjectKind> {
-		self.idmap.iter().find(|(k, _)| **k == id).map(|(_, v)| v.0)
+	pub(crate) fn find_obj_kind_by_id(&self, id: Id) -> Result<WaylandObjectKind, WaylandError> {
+		self.idmap
+			.iter()
+			.find(|(k, _)| **k == id)
+			.map(|(_, v)| v.0)
+			.ok_or_else(|| WaylandError::ObjectNonExistent)
+	}
+
+	pub(crate) fn find_obj_by_kind(&self, kind: WaylandObjectKind) -> Result<Wlto, WaylandError> {
+		self.idmap
+			.iter()
+			.find(|(_, v)| v.0 == kind)
+			.map(|(_, v)| v.1.clone())
+			.ok_or_else(|| WaylandError::ObjectNonExistent)
 	}
 }
 
@@ -196,6 +228,7 @@ pub enum WaylandError {
 	InvalidOpCode(OpCode, &'static str),
 	NoSerial,
 	InvalidEnumVariant,
+	BufferObjectNotAttached,
 }
 
 impl WaylandError {
@@ -223,6 +256,9 @@ impl fmt::Display for WaylandError {
 			WaylandError::NoSerial => write!(f, "no serial has been found"),
 			WaylandError::InvalidEnumVariant => {
 				write!(f, "an invalid enum variant has been received")
+			}
+			WaylandError::BufferObjectNotAttached => {
+				write!(f, "no buffer rust object had been attached to the surface")
 			}
 		}
 	}

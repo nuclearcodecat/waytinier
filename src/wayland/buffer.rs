@@ -1,11 +1,9 @@
-use std::error::Error;
+use std::{cell::RefCell, error::Error, rc::Rc};
 
 use crate::{
 	drop,
 	wayland::{
-		CtxType, DebugLevel, EventAction, OpCode, WaylandError, WaylandObject, WaylandObjectKind,
-		shm::PixelFormat,
-		wire::{Id, WireRequest},
+		CtxType, DebugLevel, EventAction, OpCode, RcCell, WaylandError, WaylandObject, WaylandObjectKind, shm::{PixelFormat, SharedMemoryPool}, wire::{Id, WireRequest}
 	},
 };
 
@@ -18,9 +16,33 @@ pub struct Buffer {
 	pub stride: i32,
 	pub format: PixelFormat,
 	pub in_use: bool,
+	pub shm_pool: RcCell<SharedMemoryPool>,
 }
 
 impl Buffer {
+	pub fn new_initalized(
+		shmp: RcCell<SharedMemoryPool>,
+		(offset, width, height, stride): (i32, i32, i32, i32),
+		format: PixelFormat,
+		ctx: CtxType,
+	) -> Result<RcCell<Buffer>, Box<dyn Error>> {
+		let buf = Rc::new(RefCell::new(Buffer {
+			id: 0,
+			ctx: ctx.clone(),
+			offset,
+			width,
+			height,
+			stride,
+			format,
+			in_use: false,
+			shm_pool: shmp.clone(),
+		}));
+		let id = ctx.borrow_mut().wlim.new_id_registered(WaylandObjectKind::Buffer, buf.clone());
+		buf.borrow_mut().id = id;
+		shmp.borrow().wl_create_buffer(id, (offset, width, height, stride), format)?;
+		Ok(buf)
+	}
+
 	pub(crate) fn wl_destroy(&self) -> Result<(), Box<dyn Error>> {
 		self.ctx.borrow().wlmm.send_request(&mut WireRequest {
 			sender_id: self.id,
@@ -33,6 +55,14 @@ impl Buffer {
 		self.wl_destroy()?;
 		self.ctx.borrow_mut().wlim.free_id(self.id)?;
 		Ok(())
+	}
+
+	pub fn resize(&mut self, (w, h): (i32, i32)) -> Result<(), Box<dyn Error>> {
+		self.width = w;
+		self.height = h;
+		let shmp = self.shm_pool.clone();
+		let mut shmp = shmp.borrow_mut();
+		shmp.resize(w * h * self.format.width() as i32)
 	}
 }
 

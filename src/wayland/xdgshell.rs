@@ -72,39 +72,39 @@ impl XdgWmBase {
 	pub fn make_xdg_surface(
 		&self,
 		wl_surface: RcCell<Surface>,
+		(w, h): (i32, i32),
 	) -> Result<RcCell<XdgSurface>, Box<dyn Error>> {
+		let surf_id = wl_surface.borrow().id;
 		let xdgs = Rc::new(RefCell::new(XdgSurface {
 			id: 0,
-			ctx: self.ctx.clone(),
-			wl_surface: wl_surface.clone(),
-			conf_serial: None,
 			is_configured: false,
+			wl_surface,
+			w,
+			h,
 		}));
-		let id = self
-			.ctx
-			.borrow_mut()
-			.wlim
-			.new_id_registered(WaylandObjectKind::XdgSurface, xdgs.clone());
-		self.ctx
-			.borrow()
-			.wlmm
-			.send_request(&mut self.wl_get_xdg_surface(wl_surface.borrow().id, id)?)?;
+		let mut ctx = self.ctx.borrow_mut();
+		let id = ctx.wlim.new_id_registered(WaylandObjectKind::XdgSurface, xdgs.clone());
+		ctx.wlmm.send_request(&mut self.wl_get_xdg_surface(surf_id, id)?)?;
 		xdgs.borrow_mut().id = id;
+		ctx.xdg_surface = Some(xdgs.clone());
 		Ok(xdgs)
 	}
 }
 
 pub struct XdgSurface {
 	pub id: Id,
-	ctx: CtxType,
-	wl_surface: RcCell<Surface>,
-	conf_serial: Option<u32>,
 	pub is_configured: bool,
+	pub(crate) wl_surface: RcCell<Surface>,
+	pub(crate) w: i32,
+	pub(crate) h: i32,
 }
 
 impl XdgSurface {
-	pub(crate) fn wl_get_toplevel(&self, xdg_toplevel_id: Id) -> Result<(), Box<dyn Error>> {
-		self.ctx.borrow().wlmm.send_request(&mut WireRequest {
+	pub(crate) fn wl_get_toplevel(
+		&self,
+		xdg_toplevel_id: Id,
+	) -> Result<WireRequest, Box<dyn Error>> {
+		Ok(WireRequest {
 			sender_id: self.id,
 			opcode: 1,
 			args: vec![WireArgument::NewId(xdg_toplevel_id)],
@@ -131,21 +131,18 @@ pub struct XdgTopLevel {
 impl XdgTopLevel {
 	pub fn new_from_xdg_surface(
 		xdg_surface: RcCell<XdgSurface>,
+		ctx: CtxType,
 	) -> Result<RcCell<XdgTopLevel>, Box<dyn Error>> {
 		let xdgtl = Rc::new(RefCell::new(XdgTopLevel {
 			id: 0,
-			ctx: xdg_surface.borrow().ctx.clone(),
+			ctx: ctx.clone(),
 			parent: xdg_surface.clone(),
 			title: None,
 			appid: None,
 		}));
-		let id = xdgtl
-			.borrow()
-			.ctx
-			.borrow_mut()
-			.wlim
-			.new_id_registered(WaylandObjectKind::XdgTopLevel, xdgtl.clone());
-		xdg_surface.borrow().wl_get_toplevel(id)?;
+		let mut ctx = ctx.borrow_mut();
+		let id = ctx.wlim.new_id_registered(WaylandObjectKind::XdgTopLevel, xdgtl.clone());
+		ctx.wlmm.send_request(&mut xdg_surface.borrow().wl_get_toplevel(id)?)?;
 		xdgtl.borrow_mut().id = id;
 		Ok(xdgtl)
 	}
@@ -274,6 +271,9 @@ impl WaylandObject for XdgTopLevel {
 						states
 					),
 				));
+				if w != 0 && h != 0 {
+					pending.push(EventAction::Resize(w, h));
+				}
 			}
 			// close
 			1 => {

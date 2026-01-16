@@ -68,20 +68,11 @@ impl WaylandObject for Display {
 		let mut pending = vec![];
 		match opcode {
 			0 => {
-				let obj_id = u32::from_wire(&p[8..])?;
-				let code = u32::from_wire(&p[12..])?;
-				let message = String::from_wire(&p[16..])?;
+				let obj_id = u32::from_wire(p)?;
+				let code = u32::from_wire(&p[4..])?;
+				let message = String::from_wire(&p[8..])?;
 				// maybe add some sort of error manager
-				eprintln!(
-					"======== ERROR {} FIRED in wl_display\nfor object {:?}\n{:?}",
-					code,
-					self.ctx
-						.borrow()
-						.wlim
-						.find_obj_kind_by_id(obj_id)
-						.ok_or(WaylandError::ObjectNonExistent)?,
-					message
-				);
+				eprintln!("======== ERROR {} FIRED in wl_display\nfor object\n{:?}", code, message);
 				pending.push(EventAction::Error(
 					RecvError {
 						id: obj_id,

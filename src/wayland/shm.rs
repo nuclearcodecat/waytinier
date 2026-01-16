@@ -31,11 +31,18 @@ pub enum PixelFormat {
 }
 
 impl PixelFormat {
-	pub fn from_u32(processee: u32) -> Result<PixelFormat, Box<dyn Error>> {
+	pub(crate) fn from_u32(processee: u32) -> Result<PixelFormat, Box<dyn Error>> {
 		match processee {
 			0 => Ok(PixelFormat::Argb888),
 			1 => Ok(PixelFormat::Xrgb888),
 			_ => Err(WaylandError::InvalidPixelFormat.boxed()),
+		}
+	}
+
+	pub(crate) fn width(&self) -> usize {
+		match self {
+			Self::Argb888 => 4,
+			Self::Xrgb888 => 4,
 		}
 	}
 }
@@ -85,18 +92,10 @@ impl SharedMemory {
 			.borrow_mut()
 			.wlim
 			.new_id_registered(WaylandObjectKind::SharedMemoryPool, shmpool.clone());
-		shmpool.borrow_mut().id = id;
-
-		let ptr =
-			unsafe { mmap(null_mut(), size as usize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0) };
-		if ptr == MAP_FAILED {
-			return Err(Box::new(std::io::Error::last_os_error()));
-		} else {
-			let x: *mut [u8] = ptr::slice_from_raw_parts_mut(ptr as *mut u8, size as usize);
-			shmpool.borrow_mut().ptr = Some(ptr);
-			shmpool.borrow_mut().slice = Some(x);
-		};
-
+		let shmpool_ = shmpool.clone();
+		let mut shmpool_ = shmpool_.borrow_mut();
+		shmpool_.id = id;
+		shmpool_.update_ptr()?;
 		self.wl_create_pool(size, fd, id)?;
 		Ok(shmpool)
 	}
@@ -125,7 +124,7 @@ pub struct SharedMemoryPool {
 	ctx: CtxType,
 	name: CString,
 	pub size: i32,
-	fd: RawFd,
+	pub(crate) fd: RawFd,
 	pub slice: Option<*mut [u8]>,
 	ptr: Option<*mut c_void>,
 }
@@ -163,28 +162,6 @@ impl SharedMemoryPool {
 		})
 	}
 
-	pub fn make_buffer(
-		&self,
-		(offset, width, height, stride): (i32, i32, i32, i32),
-		format: PixelFormat,
-	) -> Result<RcCell<Buffer>, Box<dyn Error>> {
-		let buf = Rc::new(RefCell::new(Buffer {
-			id: 0,
-			ctx: self.ctx.clone(),
-			offset,
-			width,
-			height,
-			stride,
-			format,
-			in_use: false,
-		}));
-		let id =
-			self.ctx.borrow_mut().wlim.new_id_registered(WaylandObjectKind::Buffer, buf.clone());
-		buf.borrow_mut().id = id;
-		self.wl_create_buffer(id, (offset, width, height, stride), format)?;
-		Ok(buf)
-	}
-
 	pub(crate) fn unmap(&self) -> Result<(), std::io::Error> {
 		let r = unsafe { munmap(self.ptr.unwrap(), self.size as usize) };
 		if r == 0 {
@@ -217,6 +194,36 @@ impl SharedMemoryPool {
 		self.unlink()?;
 		self.unmap()?;
 		Ok(())
+	}
+
+	pub(crate) fn update_ptr(&mut self) -> Result<(), Box<dyn Error>> {
+		let ptr =
+			unsafe { mmap(null_mut(), self.size as usize, PROT_READ | PROT_WRITE, MAP_SHARED, self.fd, 0) };
+		if ptr == MAP_FAILED {
+			return Err(Box::new(std::io::Error::last_os_error()));
+		} else {
+			let x: *mut [u8] = ptr::slice_from_raw_parts_mut(ptr as *mut u8, self.size as usize);
+			self.ptr = Some(ptr);
+			self.slice = Some(x);
+		};
+		Ok(())
+	}
+
+	pub fn resize(&mut self, size: i32) -> Result<(), Box<dyn Error>> {
+		if let Some(old_ptr) = self.ptr {
+			let r = unsafe { munmap(old_ptr, self.size as usize) };
+			if r != 0 {
+				return Err(Box::new(std::io::Error::last_os_error()));
+			}
+		}
+		self.size = size;
+		let r = unsafe { ftruncate(self.fd, size.into()) };
+		if r == 0 {
+			Ok(())
+		} else {
+			Err(std::io::Error::last_os_error())
+		}?;
+		self.update_ptr()
 	}
 }
 

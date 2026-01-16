@@ -1,11 +1,7 @@
 use std::error::Error;
 
 use crate::wayland::{
-	CtxType, EventAction, RcCell, WaylandObject, WaylandObjectKind,
-	buffer::Buffer,
-	callback::Callback,
-	region::Region,
-	wire::{Id, WireArgument, WireRequest},
+	CtxType, EventAction, RcCell, WaylandError, WaylandObject, WaylandObjectKind, buffer::Buffer, callback::Callback, region::Region, wire::{Id, WireArgument, WireRequest}
 };
 
 pub struct Surface {
@@ -37,17 +33,22 @@ impl Surface {
 		Ok(())
 	}
 
-	pub(crate) fn wl_attach(&self, buf_id: Id) -> Result<(), Box<dyn Error>> {
-		self.ctx.borrow().wlmm.send_request(&mut WireRequest {
+	pub(crate) fn wl_attach(&self, buf_id: Id) -> Result<WireRequest, Box<dyn Error>> {
+		Ok(WireRequest {
 			sender_id: self.id,
 			opcode: 1,
 			args: vec![WireArgument::Obj(buf_id), WireArgument::UnInt(0), WireArgument::UnInt(0)],
 		})
 	}
 
-	pub fn attach_buffer(&mut self, to_att: RcCell<Buffer>) -> Result<(), Box<dyn Error>> {
+	pub fn attach_buffer_obj(&mut self, to_att: RcCell<Buffer>) -> Result<(), Box<dyn Error>> {
 		self.attached_buf = Some(to_att.clone());
-		self.wl_attach(to_att.borrow().id)
+		self.attach_buffer()
+	}
+
+	pub fn attach_buffer(&mut self) -> Result<(), Box<dyn Error>> {
+		let buf =  self.attached_buf.clone().ok_or(WaylandError::BufferObjectNotAttached)?;
+		self.ctx.borrow().wlmm.send_request(&mut self.wl_attach(buf.borrow().id)?)
 	}
 
 	pub(crate) fn wl_commit(&self) -> Result<(), Box<dyn Error>> {
@@ -77,6 +78,19 @@ impl Surface {
 
 	pub fn damage_buffer(&self, region: Region) -> Result<(), Box<dyn Error>> {
 		self.ctx.borrow().wlmm.send_request(&mut self.wl_damage_buffer(region)?)
+	}
+
+	pub fn repaint(&self) -> Result<(), Box<dyn Error>> {
+		if let Some(buf) = &self.attached_buf {
+			let buf = buf.borrow();
+			self.ctx.borrow().wlmm.send_request(&mut self.wl_damage_buffer(Region {
+				x: 0,
+				y: 0,
+				w: buf.width,
+				h: buf.height,
+			})?)?;
+		};
+		Ok(())
 	}
 
 	pub(crate) fn wl_frame(&self, id: Id) -> Result<WireRequest, Box<dyn Error>> {
