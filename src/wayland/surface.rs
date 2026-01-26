@@ -11,7 +11,7 @@ use crate::wayland::{
 pub struct Surface {
 	pub id: Id,
 	pub(crate) ctx: CtxType,
-	pub(crate) attached_buf: Option<RcCell<Buffer>>,
+	pub attached_buf: Option<RcCell<Buffer>>,
 }
 
 impl Surface {
