@@ -1,7 +1,11 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
 use crate::wayland::{
-	Context, CtxType, DebugLevel, EventAction, ExpectRc, RcCell, WaylandError, WaylandObject, WaylandObjectKind, WeakCell, registry::Registry, surface::Surface, wire::{FromWirePayload, Id, WireArgument, WireRequest}
+	Context, CtxType, DebugLevel, EventAction, ExpectRc, RcCell, WaylandError, WaylandObject,
+	WaylandObjectKind, WeakCell,
+	registry::Registry,
+	surface::Surface,
+	wire::{FromWirePayload, Id, WireArgument, WireRequest},
 };
 
 pub struct XdgWmBase {
@@ -257,7 +261,7 @@ impl WaylandObject for XdgTopLevel {
 					})
 					.collect::<Result<Vec<_>, _>>()?;
 				pending.push(EventAction::DebugMessage(
-					DebugLevel::Verbose,
+					DebugLevel::Trivial,
 					format!(
 						"{} configure // w: {}, h: {}, states: {:?}",
 						self.as_str(),

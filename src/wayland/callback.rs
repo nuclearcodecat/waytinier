@@ -50,7 +50,7 @@ impl WaylandObject for Callback {
 				self.done = true;
 				self.data = Some(data);
 				pending.push(EventAction::DebugMessage(
-					DebugLevel::Verbose,
+					DebugLevel::Trivial,
 					format!("callback {} done with data {}", self.id, data),
 				));
 			}

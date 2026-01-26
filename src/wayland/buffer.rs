@@ -1,8 +1,11 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
-use crate::wayland::{
-	Context, CtxType, DebugLevel, EventAction, ExpectRc, OpCode, RcCell, WaylandError, WaylandObject, WaylandObjectKind, WeakCell, shm::{PixelFormat, SharedMemoryPool}, wire::{Id, WireRequest}
-};
+use crate::{GREEN, NONE, wayland::{
+	Context, CtxType, DebugLevel, EventAction, ExpectRc, OpCode, RcCell, WaylandError,
+	WaylandObject, WaylandObjectKind, WeakCell,
+	shm::{PixelFormat, SharedMemoryPool},
+	wire::{Id, WireRequest},
+}, wlog};
 
 pub struct Buffer {
 	pub id: Id,
@@ -63,13 +66,13 @@ impl Buffer {
 		&mut self,
 		new_buf_id: Id,
 		(w, h): (i32, i32),
-	) -> Result<Vec<WireRequest>, Box<dyn Error>> {
+	) -> Result<Vec<EventAction>, Box<dyn Error>> {
 		let mut pending = vec![];
 		self.width = w;
 		self.height = h;
-		println!("! buffer ! RESIZE w: {} h: {}", self.width, self.height);
+		wlog!(DebugLevel::Important, "buffer", format!("RESIZE w: {} h: {}", self.width, self.height), GREEN, NONE);
 
-		pending.push(self.wl_destroy());
+		pending.push(EventAction::Request(self.wl_destroy()));
 
 		let shmp = self.shm_pool.upgrade().to_wl_err()?;
 		let mut shmp = shmp.borrow_mut();
@@ -78,11 +81,11 @@ impl Buffer {
 
 		self.id = new_buf_id;
 
-		pending.push(shmp.wl_create_buffer(
+		pending.push(EventAction::Request(shmp.wl_create_buffer(
 			self.id,
 			(self.offset, self.width, self.height, self.width * self.format.width() as i32),
 			self.format,
-		));
+		)));
 
 		Ok(pending)
 	}
@@ -100,7 +103,7 @@ impl WaylandObject for Buffer {
 			0 => {
 				self.in_use = false;
 				pending.push(EventAction::DebugMessage(
-					DebugLevel::Verbose,
+					DebugLevel::Trivial,
 					format!("{} not in use anymore", self.as_str()),
 				))
 			}

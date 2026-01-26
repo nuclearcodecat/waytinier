@@ -1,7 +1,10 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
 use crate::wayland::{
-	Context, CtxType, EventAction, ExpectRc, RcCell, WaylandObject, WaylandObjectKind, registry::Registry, surface::Surface, wire::{Id, WireArgument, WireRequest}
+	Context, CtxType, EventAction, ExpectRc, RcCell, WaylandObject, WaylandObjectKind,
+	registry::Registry,
+	surface::Surface,
+	wire::{Id, WireArgument, WireRequest},
 };
 
 pub struct Compositor {

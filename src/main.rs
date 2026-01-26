@@ -1,9 +1,10 @@
-// TODO
-// - read up on Weak because i think i'm doing Rc stuff wrong
+use std::{
+	error::Error,
+	fs::File,
+	io::{BufRead, BufReader, Read},
+};
 
-use std::{cell::RefCell, error::Error, fs::File, io::{BufRead, BufReader, Read}, rc::Rc};
-
-use wayland_raw::wayland::{
+use wayland_raw::{init_logger, wayland::{
 	Context, RcCell,
 	buffer::Buffer,
 	callback::Callback,
@@ -11,13 +12,14 @@ use wayland_raw::wayland::{
 	display::Display,
 	shm::{PixelFormat, SharedMemory},
 	xdgshell::{XdgTopLevel, XdgWmBase},
-};
+}};
 
 fn main() -> Result<(), Box<dyn Error>> {
+	init_logger();
 	const W: i32 = 500;
 	const H: i32 = 900;
 
-	let ctx = Rc::new(RefCell::new(Context::new_default()?));
+	let ctx = Context::new_default()?;
 	let display = Display::new(ctx.clone())?;
 	let registry = display.borrow_mut().make_registry()?;
 	ctx.borrow_mut().handle_events()?;
@@ -55,9 +57,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 				let (r, g, b) = hsv_to_rgb((frame % 360) as f64, 1.0, 1.0);
 
-				unsafe {
-					frame = frame.wrapping_add(1);
+				frame = frame.wrapping_add(1);
 
+				unsafe {
 					let slice = &mut *shm_pool.borrow_mut().slice.unwrap();
 					let sur = surface.borrow();
 					let buf = sur.attached_buf.clone().ok_or("no buffer")?;
@@ -73,7 +75,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 							let rel_x = x as isize - start_x;
 							let rel_y = y as isize - start_y;
 
-							if rel_x >= 0 && rel_x < img_w as isize && rel_y >= 0 && rel_y < img_h as isize {
+							if rel_x >= 0
+								&& rel_x < img_w as isize
+								&& rel_y >= 0 && rel_y < img_h as isize
+							{
 								let img_ix = (rel_y as usize * img_w + rel_x as usize) * 3;
 								slice[surface_ix + 2] = machine[img_ix];
 								slice[surface_ix + 1] = machine[img_ix + 1];

@@ -10,7 +10,7 @@ use std::{
 // std depends on libc anyway so i consider using it fair
 // i may replace this with asm in the future but that means amd64 only
 use crate::wayland::{
-	Context, CtxType, EventAction, ExpectRc, RcCell, WaylandError, WaylandObject, WaylandObjectKind, registry::Registry, wire::{FromWirePayload, Id, WireArgument, WireRequest}
+	Context, CtxType, DebugLevel, EventAction, ExpectRc, RcCell, WaylandError, WaylandObject, WaylandObjectKind, registry::Registry, wire::{FromWirePayload, Id, WireArgument, WireRequest}
 };
 use libc::{
 	MAP_FAILED, MAP_SHARED, O_CREAT, O_RDWR, PROT_READ, PROT_WRITE, close, ftruncate, mmap, munmap,
@@ -65,10 +65,8 @@ impl SharedMemory {
 		ctx: RcCell<Context>,
 	) -> Result<RcCell<Self>, Box<dyn Error>> {
 		let shm = Rc::new(RefCell::new(Self::new(0, Rc::downgrade(&ctx))));
-		let id = ctx
-			.borrow_mut()
-			.wlim
-			.new_id_registered(WaylandObjectKind::SharedMemory, shm.clone());
+		let id =
+			ctx.borrow_mut().wlim.new_id_registered(WaylandObjectKind::SharedMemory, shm.clone());
 		shm.borrow_mut().id = id;
 		registry.bind(id, WaylandObjectKind::SharedMemory, 1)?;
 		Ok(shm)
@@ -181,12 +179,15 @@ impl SharedMemoryPool {
 		}
 	}
 
-	pub(crate) fn unmap(&self) -> Result<(), std::io::Error> {
-		let r = unsafe { munmap(self.ptr.unwrap(), self.size as usize) };
-		if r == 0 {
-			Ok(())
+	pub(crate) fn unmap(&self) -> Result<(), Box<dyn Error>> {
+		if let Some(ptr) = self.ptr {
+			if unsafe { munmap(ptr, self.size as usize) } == 0 {
+				Ok(())
+			} else {
+				Err(Box::new(std::io::Error::last_os_error()))
+			}
 		} else {
-			Err(std::io::Error::last_os_error())
+			Err(WaylandError::RequiredValueNone.boxed())
 		}
 	}
 
@@ -237,18 +238,13 @@ impl SharedMemoryPool {
 	pub(crate) fn resize_if_larger(
 		&mut self,
 		size: i32,
-	) -> Result<Vec<WireRequest>, Box<dyn Error>> {
+	) -> Result<Vec<EventAction>, Box<dyn Error>> {
 		let mut pending = vec![];
 		if size < self.size {
 			return Ok(pending);
 		}
-		println!("! shm pool ! RESIZE size {size}");
-		if let Some(old_ptr) = self.ptr {
-			let r = unsafe { munmap(old_ptr, self.size as usize) };
-			if r != 0 {
-				return Err(Box::new(std::io::Error::last_os_error()));
-			}
-		}
+		pending.push(EventAction::DebugMessage(DebugLevel::Important, format!("shm pool | RESIZE size {size}")));
+		self.unmap()?;
 		self.size = size;
 		let r = unsafe { ftruncate(self.fd, size.into()) };
 		if r == 0 {
@@ -257,7 +253,7 @@ impl SharedMemoryPool {
 			Err(std::io::Error::last_os_error())
 		}?;
 		self.update_ptr()?;
-		pending.push(self.wl_resize());
+		pending.push(EventAction::Request(self.wl_resize()));
 		Ok(pending)
 	}
 }
@@ -275,12 +271,12 @@ impl WaylandObject for SharedMemory {
 				if let Ok(pf) = PixelFormat::from_u32(format) {
 					self.push_pix_format(pf);
 					pending.push(EventAction::DebugMessage(
-						crate::wayland::DebugLevel::Verbose,
+						crate::wayland::DebugLevel::Trivial,
 						format!("pushing pixel format {:?} (0x{:08x})", pf, format),
 					));
 				} else {
 					pending.push(EventAction::DebugMessage(
-						crate::wayland::DebugLevel::Important,
+						crate::wayland::DebugLevel::Error,
 						format!("found unrecognized pixel format 0x{:08x}", format),
 					));
 				}

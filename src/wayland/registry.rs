@@ -1,7 +1,9 @@
 use std::{collections::HashMap, error::Error};
 
 use crate::wayland::{
-	CtxType, DebugLevel, EventAction, ExpectRc, OpCode, WaylandError, WaylandObject, WaylandObjectKind, wire::{FromWirePayload, Id, WireArgument, WireRequest}
+	CtxType, DebugLevel, EventAction, ExpectRc, OpCode, WaylandError, WaylandObject,
+	WaylandObjectKind,
+	wire::{FromWirePayload, Id, WireArgument, WireRequest},
 };
 
 pub struct Registry {
@@ -90,7 +92,7 @@ impl WaylandObject for Registry {
 						version,
 					},
 				);
-				pending.push(EventAction::DebugMessage(DebugLevel::Verbose, msg));
+				pending.push(EventAction::DebugMessage(DebugLevel::Trivial, msg));
 			}
 			// can global_remove even happen
 			1 => {
