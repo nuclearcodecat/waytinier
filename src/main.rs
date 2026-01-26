@@ -64,10 +64,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 					println!("! main ! slice len: {}", slice.len());
 					frame = frame.wrapping_add(1);
 
-					for pixel in slice.chunks_mut(4) {
-						pixel[0] = r;
-						pixel[1] = g;
-						pixel[2] = b;
+					for (ix, pixel) in slice.chunks_mut(4).enumerate() {
+						pixel[0] = r.wrapping_add(ix as u8);
+						pixel[1] = g.wrapping_add(ix as u8);
+						pixel[2] = b.wrapping_add(ix as u8);
 					}
 				}
 				surface.borrow_mut().attach_buffer()?;

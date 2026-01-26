@@ -163,6 +163,24 @@ impl SharedMemoryPool {
 		}
 	}
 
+	pub(crate) fn wl_destroy(&self) -> WireRequest {
+		WireRequest {
+			sender_id: self.id,
+			opcode: 1,
+			args: vec![],
+		}
+	}
+
+	pub(crate) fn wl_resize(&self) -> WireRequest {
+		WireRequest {
+			sender_id: self.id,
+			opcode: 2,
+			args: vec![
+				WireArgument::Int(self.size),
+			],
+		}
+	}
+
 	pub(crate) fn unmap(&self) -> Result<(), std::io::Error> {
 		let r = unsafe { munmap(self.ptr.unwrap(), self.size as usize) };
 		if r == 0 {
@@ -170,14 +188,6 @@ impl SharedMemoryPool {
 		} else {
 			Err(std::io::Error::last_os_error())
 		}
-	}
-
-	pub(crate) fn wl_destroy(&self) -> Result<(), Box<dyn Error>> {
-		self.ctx.borrow().wlmm.send_request(&mut WireRequest {
-			sender_id: self.id,
-			opcode: 1,
-			args: vec![],
-		})
 	}
 
 	fn unlink(&self) -> Result<(), std::io::Error> {
@@ -199,8 +209,9 @@ impl SharedMemoryPool {
 	}
 
 	pub fn destroy(&self) -> Result<(), Box<dyn Error>> {
-		self.wl_destroy()?;
-		self.ctx.borrow_mut().wlim.free_id(self.id)?;
+		let mut ctx = self.ctx.borrow_mut();
+		ctx.wlmm.send_request(&mut self.wl_destroy())?;
+		ctx.wlim.free_id(self.id)?;
 		self.unmap()?;
 		self.unlink()?;
 		self.close()?;
@@ -222,7 +233,11 @@ impl SharedMemoryPool {
 		Ok(())
 	}
 
-	pub fn resize(&mut self, size: i32) -> Result<(), Box<dyn Error>> {
+	pub(crate) fn resize_if_larger(&mut self, size: i32) -> Result<Vec<WireRequest>, Box<dyn Error>> {
+		let mut pending = vec![];
+		if size < self.size {
+			return Ok(pending);
+		}
 		println!("! shm pool ! RESIZE size {size}");
 		if let Some(old_ptr) = self.ptr {
 			let r = unsafe { munmap(old_ptr, self.size as usize) };
@@ -237,7 +252,9 @@ impl SharedMemoryPool {
 		} else {
 			Err(std::io::Error::last_os_error())
 		}?;
-		self.update_ptr()
+		self.update_ptr()?;
+		pending.push(self.wl_resize());
+		Ok(pending)
 	}
 }
 

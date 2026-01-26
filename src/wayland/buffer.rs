@@ -69,7 +69,8 @@ impl Buffer {
 
 		let shmp = self.shm_pool.clone();
 		let mut shmp = shmp.borrow_mut();
-		shmp.resize(w * h * self.format.width() as i32)?;
+		let mut shm_actions = shmp.resize_if_larger(w * h * self.format.width() as i32)?;
+		pending.append(&mut shm_actions);
 
 		self.id = new_buf_id;
 
