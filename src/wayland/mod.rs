@@ -98,7 +98,7 @@ impl God {
 	}
 
 	pub fn handle_events(&mut self) -> Result<(), Box<dyn Error>> {
-		wlog!(DebugLevel::Important, "event handler", "called", CYAN, NONE);
+		wlog!(DebugLevel::Trivial, "event handler", "called", CYAN, NONE);
 		let mut retries = 0;
 		while self.wlmm.get_events()? == 0 && retries < 9999 {
 			retries += 1;
@@ -150,20 +150,28 @@ impl God {
 					let xdgs = self.xdg_surface.clone().ok_or(WaylandError::ObjectNonExistent)?;
 					let xdgs = xdgs.borrow_mut();
 					let surf = xdgs.wl_surface.upgrade().to_wl_err()?;
-					let surf = surf.borrow();
-					let buf_ = surf.attached_buf.clone().ok_or(WaylandError::ObjectNonExistent)?;
-					let mut buf = buf_.borrow_mut();
-					wlog!(
-						DebugLevel::Important,
-						"event handler",
-						format!("calling resize, w: {}, h: {}", w, h),
-						CYAN,
-						NONE
-					);
-					let new_buf_id =
-						self.wlim.new_id_registered(WaylandObjectKind::Buffer, buf_.clone());
-					let acts = buf.resize(new_buf_id, (w, h))?;
-					actions.extend_front(acts);
+					let mut surf = surf.borrow_mut();
+
+
+					if surf.w != 0 || surf.h != 0 {
+
+						let buf_ = surf.attached_buf.clone().ok_or(WaylandError::ObjectNonExistent)?;
+						let mut buf = buf_.borrow_mut();
+						wlog!(
+							DebugLevel::Important,
+							"event handler",
+							format!("calling resize, w: {}, h: {}", w, h),
+							CYAN,
+							NONE
+						);
+						let new_buf_id =
+							self.wlim.new_id_registered(WaylandObjectKind::Buffer, buf_.clone());
+						let acts = buf.resize(new_buf_id, (w, h))?;
+						actions.extend_front(acts);
+					}
+
+					surf.w = w;
+					surf.h = h;
 				}
 			};
 		}

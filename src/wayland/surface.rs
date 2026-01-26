@@ -12,6 +12,8 @@ pub struct Surface {
 	pub id: Id,
 	pub(crate) god: WeRcGod,
 	pub attached_buf: Option<RcCell<Buffer>>,
+	pub w: i32,
+	pub h: i32,
 }
 
 impl Surface {
@@ -20,6 +22,8 @@ impl Surface {
 			id,
 			god,
 			attached_buf: None,
+			w: 0,
+			h: 0,
 		}
 	}
 

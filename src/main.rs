@@ -37,13 +37,15 @@ fn main() -> Result<(), Box<dyn Error>> {
 	xdg_toplevel.borrow_mut().set_app_id(String::from("wayland-raw-appid"))?;
 	xdg_toplevel.borrow_mut().set_title(String::from("wayland-raw-title"))?;
 
-	let buf = Buffer::new_initalized(shm_pool.clone(), (0, W, H), pf, god.clone())?;
-	surface.borrow_mut().attach_buffer_obj(buf.clone())?;
+	// let buf = Buffer::new_initalized(shm_pool.clone(), (0, W, H), pf, god.clone())?;
+	// surface.borrow_mut().attach_buffer_obj(buf.clone())?;
 	surface.borrow_mut().commit()?;
 	let mut frame: usize = 0;
 	let mut cb: Option<RcCell<Callback>> = None;
 
 	let (img_w, img_h, machine) = parse_pix("pix.ppm")?;
+	let mut rdy1 = false;
+	let mut rdy2 = false;
 	loop {
 		god.borrow_mut().handle_events()?;
 
@@ -56,8 +58,25 @@ fn main() -> Result<(), Box<dyn Error>> {
 				None => true,
 			};
 
+			let mut surf = surface.borrow_mut();
+			if surf.attached_buf.is_none() {
+				if surf.w > 0 && surf.h > 0 {
+					let buf = Buffer::new_initalized(
+						shm_pool.clone(), 
+						(0, surf.w, surf.h), 
+						pf, 
+						god.clone()
+					)?;
+					surf.attach_buffer_obj(buf)?;
+					surf.commit()?;
+					god.borrow_mut().handle_events()?;
+				}
+				rdy1 = true;
+				continue;
+			}
+
 			if ready {
-				let new_cb = surface.borrow_mut().frame()?;
+				let new_cb = surf.frame()?;
 				cb = Some(new_cb);
 
 				let (r, g, b) = hsv_to_rgb((frame % 360) as f64, 1.0, 1.0);
@@ -66,8 +85,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 				unsafe {
 					let slice = &mut *shm_pool.borrow_mut().slice.unwrap();
-					let sur = surface.borrow();
-					let buf = sur.attached_buf.clone().ok_or("no buffer")?;
+					let buf = surf.attached_buf.clone().ok_or("no buffer")?;
 					let buf = buf.borrow();
 
 					let start_x = buf.width as isize / 2 - img_w as isize / 2;
@@ -85,20 +103,27 @@ fn main() -> Result<(), Box<dyn Error>> {
 								&& rel_y >= 0 && rel_y < img_h as isize
 							{
 								let img_ix = (rel_y as usize * img_w + rel_x as usize) * 3;
+								if surface_ix < 64000 || rdy2 == true {
 								slice[surface_ix + 2] = machine[img_ix];
 								slice[surface_ix + 1] = machine[img_ix + 1];
 								slice[surface_ix] = machine[img_ix + 2];
+								}
 							} else {
+								if surface_ix < 64000 || rdy2 == true {
 								slice[surface_ix] = b.wrapping_sub(x as u8);
 								slice[surface_ix + 1] = g.wrapping_add(y as u8);
 								slice[surface_ix + 2] = r.wrapping_shl(x as u32);
+								}
 							}
 						}
 					}
 				}
-				surface.borrow_mut().attach_buffer()?;
-				surface.borrow_mut().repaint()?;
-				surface.borrow_mut().commit()?;
+				surf.attach_buffer()?;
+				surf.repaint()?;
+				surf.commit()?;
+				if rdy1 {
+					rdy2 = true
+				}
 			}
 		}
 	}
