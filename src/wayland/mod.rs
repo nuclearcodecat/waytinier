@@ -1,7 +1,7 @@
 use crate::{
-	CYAN, NONE, RED, WHITE, YELLOW,
+	CYAN, DebugLevel, NONE, RED, WHITE, YELLOW,
 	wayland::{
-		wire::{Id, MessageManager, WireRequest},
+		wire::{Id, MessageManager, QueueEntry, WireRequest},
 		xdgshell::XdgSurface,
 	},
 	wlog,
@@ -45,16 +45,6 @@ impl RecvError {
 	pub fn boxed(self) -> Box<Self> {
 		Box::new(self)
 	}
-}
-
-#[allow(dead_code)]
-#[repr(isize)]
-#[derive(PartialEq)]
-pub(crate) enum DebugLevel {
-	None,
-	Error,
-	Important,
-	Trivial,
 }
 
 pub(crate) enum EventAction {
@@ -105,12 +95,20 @@ impl God {
 		}
 		let mut last_id: Id = 0;
 		let mut actions: VecDeque<(EventAction, WaylandObjectKind, Id)> = VecDeque::new();
-		while let Some(ev) = self.wlmm.q.pop_front() {
-			let obj = self.wlim.find_obj_by_id(ev.recv_id)?;
-			let resulting_actions = obj.1.borrow_mut().handle(ev.opcode, &ev.payload)?;
-			let x: Vec<(EventAction, WaylandObjectKind, Id)> =
-				resulting_actions.into_iter().map(|x| (x, obj.0, ev.recv_id)).collect();
-			actions.extend(x);
+		while let Some(entry) = self.wlmm.q.pop_front() {
+			match entry {
+				QueueEntry::EventResponse(ev) => {
+					let obj = self.wlim.find_obj_by_id(ev.recv_id)?;
+					let resulting_actions = obj.1.borrow_mut().handle(ev.opcode, &ev.payload)?;
+					let x: Vec<(EventAction, WaylandObjectKind, Id)> =
+						resulting_actions.into_iter().map(|x| (x, obj.0, ev.recv_id)).collect();
+					actions.extend(x);
+				},
+				QueueEntry::Request((req, kind)) => {
+					let id = req.sender_id;
+					actions.push_back((EventAction::Request(req), kind, id));
+				},
+			}
 		}
 		while let Some((act, kind, id)) = actions.pop_front() {
 			if last_id != id {
@@ -125,7 +123,7 @@ impl God {
 			}
 			match act {
 				EventAction::Request(mut msg) => {
-					self.wlmm.send_request(&mut msg)?;
+					self.wlmm.send_request_logged(&mut msg, Some(id), Some(kind), None)?;
 				}
 				EventAction::IdDeletion(id) => {
 					wlog!(

@@ -1,9 +1,11 @@
 #![feature(unix_socket_ancillary_data)]
 #![feature(variant_count)]
 #![feature(deque_extend_front)]
+#![feature(random)]
 
 use std::sync::OnceLock;
 
+pub mod abstraction;
 pub mod wayland;
 
 // ===== future me notes
@@ -51,6 +53,16 @@ pub(crate) fn get_dbug() -> isize {
 	*DEBUGLVL.get().unwrap_or(&0)
 }
 
+#[allow(dead_code)]
+#[repr(isize)]
+#[derive(PartialEq)]
+pub(crate) enum DebugLevel {
+	None,
+	Error,
+	Important,
+	Trivial,
+}
+
 #[macro_export]
 macro_rules! wlog {
 	($lvl:expr, $header:expr, $msg:expr, $header_color:expr, $msg_color:expr) => {
@@ -65,5 +77,12 @@ macro_rules! wlog {
 				$crate::NONE,
 			)
 		}
+	};
+}
+
+#[macro_export]
+macro_rules! dbug {
+	($msg:expr) => {
+		$crate::wlog!($crate::DebugLevel::Important, "DEBUG", $msg, $crate::CYAN, $crate::CYAN);
 	};
 }

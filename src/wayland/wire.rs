@@ -1,19 +1,12 @@
 use std::{
-	collections::VecDeque,
-	env,
-	error::Error,
-	io::{IoSlice, Read},
-	os::{
+	collections::VecDeque, env, error::Error, fmt::Display, io::{IoSlice, Read}, os::{
 		fd::RawFd,
 		unix::net::{SocketAncillary, UnixStream},
-	},
-	path::PathBuf,
+	}, path::PathBuf
 };
 
 use crate::{
-	GREEN, NONE,
-	wayland::{DebugLevel, WaylandError},
-	wlog,
+	GREEN, NONE, RED, wayland::{DebugLevel, OpCode, WaylandError, WaylandObjectKind}, wlog
 };
 
 pub type Id = u32;
@@ -61,17 +54,59 @@ pub enum WireArgumentKind {
 }
 
 #[derive(Debug)]
-pub struct MessageManager {
-	pub sock: UnixStream,
-	pub q: VecDeque<WireEventRaw>,
+pub(crate) enum QueueEntry {
+	EventResponse(WireEventRaw),
+	Request((WireRequest, WaylandObjectKind)),
+}
+
+#[derive(Debug)]
+pub(crate) struct MessageManager {
+	pub(crate) sock: UnixStream,
+	pub(crate) q: VecDeque<QueueEntry>,
 }
 
 impl Drop for MessageManager {
 	fn drop(&mut self) {
-		println!("called drop for MessageManager");
+		wlog!(DebugLevel::Important, "wlmm", "called drop for MessageManager", GREEN, NONE);
 		let r = self.discon();
 		if r.is_err() {
-			eprintln!("failed to drop MessageManager\n{:#?}", r);
+			wlog!(DebugLevel::Error, "wlmm", format!("failed to drop MessageManager\n{:#?}", r), RED, RED);
+		}
+	}
+}
+
+struct WireDebugMessage<'a> {
+	opcode: (Option<String>, OpCode),
+	object: (Option<WaylandObjectKind>, Option<Id>),
+	args: &'a Vec<WireArgument>,
+}
+
+impl Display for WireDebugMessage<'_> {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let part1 = if let Some(opcode_str) = &self.opcode.0 {
+			format!("{opcode_str} ({}°) ", self.opcode.1)
+		} else {
+			format!(": opcode {}, ", self.opcode.1)
+		};
+		let part2 = if let Some(kind) = self.object.0 {
+			let mut og = format!("for object {:?}", kind);
+			if let Some(id) = self.object.1 {
+				og = og + &format!(" ({})", id);
+			};
+			og
+		} else {
+			String::from("")
+		};
+		write!(f, "sending request{}{} with args {:?}", part1, part2, self.args)
+	}
+}
+
+impl WireRequest {
+	fn make_debug(&self, id: Option<Id>, kind: Option<WaylandObjectKind>, opcode_name: Option<String>) -> WireDebugMessage<'_> {
+		WireDebugMessage {
+			opcode: (opcode_name, self.opcode),
+			object: (kind, id),
+			args: &self.args,
 		}
 	}
 }
@@ -106,9 +141,17 @@ impl MessageManager {
 		Ok(self.sock.shutdown(std::net::Shutdown::Both)?)
 	}
 
+	pub fn send_request_logged(&self, msg: &mut WireRequest, id: Option<Id>, kind: Option<WaylandObjectKind>, opcode_name: Option<String>) -> Result<(), Box<dyn Error>> {
+		let dbugmsg = msg.make_debug(id, kind, opcode_name);
+		wlog!(DebugLevel::Trivial, "wlmm", format!("{}", dbugmsg), GREEN, NONE);
+		self.send_request(msg)
+	}
+
+	// note: this is an old function that's not meant to be used directly.
+	// replace every use with send_request_logged, then start using the q,
+	// which is the more organized way
 	pub fn send_request(&self, msg: &mut WireRequest) -> Result<(), Box<dyn Error>> {
 		wlog!(DebugLevel::Trivial, "wlmm", format!("sending request {:?}", msg), GREEN, NONE);
-		// println!("==== SEND_REQUEST CALLED");
 		let mut buf: Vec<u8> = vec![];
 		buf.append(&mut Vec::from(msg.sender_id.to_ne_bytes()));
 		buf.append(&mut vec![0, 0, 0, 0]);
@@ -128,7 +171,6 @@ impl MessageManager {
 			}
 		}
 		let word2 = (buf.len() << 16) as u32 | (msg.opcode as u32 & 0x0000ffffu32);
-		// println!("=== WORD2\n0b{:0b}\nlen: {}\nopcode: {}", word2, word2 >> 16, word2 & 0x0000ffff);
 		let word2 = word2.to_ne_bytes();
 		for (en, ix) in (4..=7).enumerate() {
 			buf[ix] = word2[en];
@@ -137,15 +179,6 @@ impl MessageManager {
 		let mut ancillary = SocketAncillary::new(&mut ancillary_buf);
 		ancillary.add_fds(&fds);
 		self.sock.send_vectored_with_ancillary(&[IoSlice::new(&buf)], &mut ancillary)?;
-		// self.sock.write_all(&buf)?;
-		// println!(
-		// 	// "=== REQUEST SENT\n{:#?}\n{:?}\nbuf len: {}\naux: {:?}\n\n",
-		// 	"=== REQUEST SENT\n{:#?}\n{:?}\nbuf len: {}\n\n",
-		// 	msg,
-		// 	buf,
-		// 	buf.len(),
-		// 	// ancillary
-		// );
 		Ok(())
 	}
 
@@ -195,7 +228,7 @@ impl MessageManager {
 				opcode,
 				payload,
 			};
-			self.q.push_back(event);
+			self.q.push_back(QueueEntry::EventResponse(event));
 			ctr += 1;
 
 			cursor += recv_len as usize;

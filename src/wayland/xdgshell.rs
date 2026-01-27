@@ -296,7 +296,7 @@ impl WaylandObject for XdgTopLevel {
 				self.close_requested = true;
 				pending.push(EventAction::DebugMessage(
 					DebugLevel::Important,
-					format!("{} // close requested", self.as_str()),
+					format!("{} | close requested", self.as_str()),
 				));
 			}
 			// configure_bounds

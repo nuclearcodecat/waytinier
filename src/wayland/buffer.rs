@@ -77,7 +77,7 @@ impl Buffer {
 		self.height = h;
 		wlog!(
 			DebugLevel::Important,
-			"wlto > buffer",
+			self.as_str(),
 			format!("RESIZE w: {} h: {}", self.width, self.height),
 			WHITE,
 			NONE

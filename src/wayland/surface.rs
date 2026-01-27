@@ -5,7 +5,7 @@ use crate::wayland::{
 	buffer::Buffer,
 	callback::Callback,
 	region::Region,
-	wire::{Id, WireArgument, WireRequest},
+	wire::{Id, QueueEntry, WireArgument, WireRequest},
 };
 
 pub struct Surface {
@@ -56,12 +56,15 @@ impl Surface {
 
 	pub fn attach_buffer(&mut self) -> Result<(), Box<dyn Error>> {
 		let buf = self.attached_buf.clone().ok_or(WaylandError::BufferObjectNotAttached)?;
+		let entry = QueueEntry::Request((self.wl_attach(buf.borrow().id)?, WaylandObjectKind::Surface));
 		self.god
 			.upgrade()
 			.to_wl_err()?
-			.borrow()
+			.borrow_mut()
 			.wlmm
-			.send_request(&mut self.wl_attach(buf.borrow().id)?)
+			.q
+			.push_back(entry);
+		Ok(())
 	}
 
 	pub(crate) fn wl_commit(&self) -> WireRequest {
