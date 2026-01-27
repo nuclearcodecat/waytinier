@@ -69,6 +69,14 @@ impl Display {
 }
 
 impl WaylandObject for Display {
+	fn id(&self) -> Id {
+		self.id
+	}
+
+	fn god(&self) -> WeRcGod {
+		self.god.clone()
+	}
+
 	fn handle(
 		&mut self,
 		opcode: OpCode,
@@ -102,13 +110,19 @@ impl WaylandObject for Display {
 				pending.push(EventAction::IdDeletion(deleted_id));
 			}
 			inv => {
-				return Err(WaylandError::InvalidOpCode(inv, self.as_str()).boxed());
+				return Err(WaylandError::InvalidOpCode(inv, self.kind_as_str()).boxed());
 			}
 		}
 		Ok(pending)
 	}
 
-	fn as_str(&self) -> &'static str {
-		WaylandObjectKind::Display.as_str()
+	#[inline]
+	fn kind(&self) -> WaylandObjectKind {
+		WaylandObjectKind::Display
+	}
+
+	#[inline]
+	fn kind_as_str(&self) -> &'static str {
+		self.kind().as_str()
 	}
 }

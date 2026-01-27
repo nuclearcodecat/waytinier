@@ -28,7 +28,7 @@ impl Buffer {
 		(offset, width, height): (i32, i32, i32),
 		format: PixelFormat,
 		god: RcCell<God>,
-	) -> Result<RcCell<Buffer>, Box<dyn Error>> {
+	) -> RcCell<Buffer> {
 		let buf = Rc::new(RefCell::new(Buffer {
 			id: 0,
 			god: Rc::downgrade(&god),
@@ -41,13 +41,16 @@ impl Buffer {
 		}));
 		let mut god = god.borrow_mut();
 		let id = god.wlim.new_id_registered(WaylandObjectKind::Buffer, buf.clone());
-		buf.borrow_mut().id = id;
-		god.wlmm.send_request(&mut shmp.borrow().wl_create_buffer(
-			id,
-			(offset, width, height, width * format.width() as i32),
-			format,
-		))?;
-		Ok(buf)
+		{
+			let mut buf = buf.borrow_mut();
+			buf.id = id;
+			god.wlmm.queue_request(shmp.borrow().wl_create_buffer(
+					id,
+					(offset, width, height, width * format.width()),
+					format,
+			), buf.kind());
+		}
+		buf
 	}
 
 	pub(crate) fn wl_destroy(&self) -> WireRequest {
@@ -61,7 +64,7 @@ impl Buffer {
 	pub fn destroy(&self) -> Result<(), Box<dyn Error>> {
 		let god = self.god.upgrade().to_wl_err()?;
 		let mut god = god.borrow_mut();
-		god.wlmm.send_request(&mut self.wl_destroy())?;
+		self.queue_request(self.wl_destroy())?;
 		god.wlim.free_id(self.id)?;
 		Ok(())
 	}
@@ -77,7 +80,7 @@ impl Buffer {
 		self.height = h;
 		wlog!(
 			DebugLevel::Important,
-			self.as_str(),
+			self.kind_as_str(),
 			format!("RESIZE w: {} h: {}", self.width, self.height),
 			WHITE,
 			NONE
@@ -87,7 +90,7 @@ impl Buffer {
 
 		let shmp = self.shm_pool.upgrade().to_wl_err()?;
 		let mut shmp = shmp.borrow_mut();
-		let shm_actions = shmp.resize_if_larger(w * h * self.format.width() as i32)?;
+		let shm_actions = shmp.resize_if_larger(w * h * self.format.width())?;
 		pending.append(
 			&mut shm_actions
 				.into_iter()
@@ -100,7 +103,7 @@ impl Buffer {
 		pending.push((
 			EventAction::Request(shmp.wl_create_buffer(
 				self.id,
-				(self.offset, self.width, self.height, self.width * self.format.width() as i32),
+				(self.offset, self.width, self.height, self.width * self.format.width()),
 				self.format,
 			)),
 			WaylandObjectKind::Buffer,
@@ -112,6 +115,14 @@ impl Buffer {
 }
 
 impl WaylandObject for Buffer {
+	fn id(&self) -> Id {
+		self.id
+	}
+
+	fn god(&self) -> WeRcGod {
+		self.god.clone()
+	}
+
 	fn handle(
 		&mut self,
 		opcode: super::OpCode,
@@ -124,15 +135,21 @@ impl WaylandObject for Buffer {
 				self.in_use = false;
 				pending.push(EventAction::DebugMessage(
 					DebugLevel::Trivial,
-					format!("{} not in use anymore", self.as_str()),
+					format!("{} not in use anymore", self.kind_as_str()),
 				))
 			}
-			inv => return Err(WaylandError::InvalidOpCode(inv as OpCode, self.as_str()).boxed()),
+			inv => return Err(WaylandError::InvalidOpCode(inv as OpCode, self.kind_as_str()).boxed()),
 		};
 		Ok(pending)
 	}
 
-	fn as_str(&self) -> &'static str {
-		WaylandObjectKind::Buffer.as_str()
+	#[inline]
+	fn kind(&self) -> WaylandObjectKind {
+		WaylandObjectKind::Buffer
+	}
+
+	#[inline]
+	fn kind_as_str(&self) -> &'static str {
+		self.kind().as_str()
 	}
 }

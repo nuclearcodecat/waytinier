@@ -56,12 +56,19 @@ pub(crate) enum EventAction {
 }
 
 pub(crate) trait WaylandObject {
+	fn id(&self) -> Id;
+	fn god(&self) -> WeRcGod;
 	fn handle(
 		&mut self,
 		opcode: OpCode,
 		payload: &[u8],
 	) -> Result<Vec<EventAction>, Box<dyn Error>>;
-	fn as_str(&self) -> &'static str;
+	fn kind_as_str(&self) -> &'static str;
+	fn kind(&self) -> WaylandObjectKind;
+	fn queue_request(&self, req: WireRequest) -> Result<(), Box<dyn Error>> {
+		self.god().upgrade().to_wl_err()?.borrow_mut().wlmm.queue_request(req, self.kind());
+		Ok(())
+	}
 }
 
 pub type WeRcGod = Weak<RefCell<God>>;
@@ -198,6 +205,7 @@ pub enum WaylandObjectKind {
 }
 
 impl WaylandObjectKind {
+	#[inline]
 	fn as_str(&self) -> &'static str {
 		match self {
 			WaylandObjectKind::Display => "wl_display",

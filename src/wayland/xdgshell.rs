@@ -32,67 +32,65 @@ impl XdgWmBase {
 		Ok(obj)
 	}
 
-	pub(crate) fn wl_destroy(&self) -> Result<WireRequest, Box<dyn Error>> {
-		Ok(WireRequest {
+	pub(crate) fn wl_destroy(&self) -> WireRequest {
+		WireRequest {
 			sender_id: self.id,
 			opcode: 0,
 			args: vec![],
-		})
+		}
 	}
 
 	pub fn destroy(&self) -> Result<(), Box<dyn Error>> {
-		let god = self.god.upgrade().to_wl_err()?;
-		let mut god = god.borrow_mut();
-		god.wlmm.send_request(&mut self.wl_destroy()?)?;
-		god.wlim.free_id(self.id)?;
-		Ok(())
+		self.queue_request(self.wl_destroy())
 	}
 
-	pub(crate) fn wl_pong(&self, serial: u32) -> Result<WireRequest, Box<dyn Error>> {
-		Ok(WireRequest {
+	pub(crate) fn wl_pong(&self, serial: u32) -> WireRequest {
+		WireRequest {
 			sender_id: self.id,
 			opcode: 3,
 			args: vec![WireArgument::UnInt(serial)],
-		})
+		}
 	}
 
 	pub fn pong(&self, serial: u32) -> Result<(), Box<dyn Error>> {
-		self.god.upgrade().to_wl_err()?.borrow().wlmm.send_request(&mut self.wl_pong(serial)?)
+		self.queue_request(self.wl_pong(serial))
 	}
 
 	pub(crate) fn wl_get_xdg_surface(
 		&self,
 		wl_surface_id: Id,
 		xdg_surface_id: Id,
-	) -> Result<WireRequest, Box<dyn Error>> {
-		Ok(WireRequest {
+	) -> WireRequest {
+		WireRequest {
 			sender_id: self.id,
 			opcode: 2,
 			args: vec![WireArgument::NewId(xdg_surface_id), WireArgument::Obj(wl_surface_id)],
-		})
+		}
 	}
 
 	pub fn make_xdg_surface(
 		&self,
 		wl_surface: RcCell<Surface>,
 	) -> Result<RcCell<XdgSurface>, Box<dyn Error>> {
-		let surf_id = wl_surface.borrow().id;
+		let surf = wl_surface.borrow();
+		let surf_id = surf.id;
 		let xdgs = Rc::new(RefCell::new(XdgSurface {
+			god: surf.god.clone(),
 			id: 0,
 			is_configured: false,
 			wl_surface: Rc::downgrade(&wl_surface),
 		}));
 		let god = self.god.upgrade().to_wl_err()?;
-		let mut god = god.borrow_mut();
-		let id = god.wlim.new_id_registered(WaylandObjectKind::XdgSurface, xdgs.clone());
-		god.wlmm.send_request(&mut self.wl_get_xdg_surface(surf_id, id)?)?;
+		let id = god.borrow_mut().wlim.new_id_registered(WaylandObjectKind::XdgSurface, xdgs.clone());
+		self.queue_request(self.wl_get_xdg_surface(surf_id, id))?;
 		xdgs.borrow_mut().id = id;
-		god.xdg_surface = Some(xdgs.clone());
+		god.borrow_mut().xdg_surface = Some(xdgs.clone());
 		Ok(xdgs)
 	}
 }
 
 pub struct XdgSurface {
+	god: WeRcGod,
 	pub id: Id,
 	pub is_configured: bool,
 	pub(crate) wl_surface: WeakCell<Surface>,
@@ -102,20 +100,20 @@ impl XdgSurface {
 	pub(crate) fn wl_get_toplevel(
 		&self,
 		xdg_toplevel_id: Id,
-	) -> Result<WireRequest, Box<dyn Error>> {
-		Ok(WireRequest {
+	) -> WireRequest {
+		WireRequest {
 			sender_id: self.id,
 			opcode: 1,
 			args: vec![WireArgument::NewId(xdg_toplevel_id)],
-		})
+		}
 	}
 
-	pub(crate) fn wl_ack_configure(&self, serial: u32) -> Result<WireRequest, Box<dyn Error>> {
-		Ok(WireRequest {
+	pub(crate) fn wl_ack_configure(&self, serial: u32) -> WireRequest {
+		WireRequest {
 			sender_id: self.id,
 			opcode: 4,
 			args: vec![WireArgument::UnInt(serial)],
-		})
+		}
 	}
 }
 
@@ -143,45 +141,38 @@ impl XdgTopLevel {
 		}));
 		let mut god = god.borrow_mut();
 		let id = god.wlim.new_id_registered(WaylandObjectKind::XdgTopLevel, xdgtl.clone());
-		god.wlmm.send_request(&mut xdg_surface.borrow().wl_get_toplevel(id)?)?;
-		xdgtl.borrow_mut().id = id;
+		{
+			let mut tl_borrow = xdgtl.borrow_mut();
+			god.wlmm.queue_request(xdg_surface.borrow().wl_get_toplevel(id), tl_borrow.kind());
+			tl_borrow.id = id;
+		}
 		Ok(xdgtl)
 	}
 
-	pub(crate) fn wl_set_app_id(&self, id: String) -> Result<WireRequest, Box<dyn Error>> {
-		Ok(WireRequest {
+	pub(crate) fn wl_set_app_id(&self, id: String) -> WireRequest {
+		WireRequest {
 			sender_id: self.id,
 			opcode: 3,
 			args: vec![WireArgument::String(id)],
-		})
+		}
 	}
 
 	pub fn set_app_id(&mut self, id: &str) -> Result<(), Box<dyn Error>> {
 		self.appid = Some(id.to_string());
-		self.god
-			.upgrade()
-			.to_wl_err()?
-			.borrow()
-			.wlmm
-			.send_request(&mut self.wl_set_app_id(id.to_string())?)
+		self.queue_request(self.wl_set_app_id(id.to_string()))
 	}
 
-	pub(crate) fn wl_set_title(&self, id: String) -> Result<WireRequest, Box<dyn Error>> {
-		Ok(WireRequest {
+	pub(crate) fn wl_set_title(&self, id: String) -> WireRequest {
+		WireRequest {
 			sender_id: self.id,
 			opcode: 2,
 			args: vec![WireArgument::String(id)],
-		})
+		}
 	}
 
 	pub fn set_title(&mut self, id: &str) -> Result<(), Box<dyn Error>> {
 		self.title = Some(id.to_string());
-		self.god
-			.upgrade()
-			.to_wl_err()?
-			.borrow()
-			.wlmm
-			.send_request(&mut self.wl_set_title(id.to_string())?)
+		self.queue_request(self.wl_set_title(id.to_string()))
 	}
 }
 
@@ -205,6 +196,14 @@ enum XdgTopLevelStates {
 }
 
 impl WaylandObject for XdgWmBase {
+	fn id(&self) -> Id {
+		self.id
+	}
+
+	fn god(&self) -> WeRcGod {
+		self.god.clone()
+	}
+
 	fn handle(
 		&mut self,
 		opcode: super::OpCode,
@@ -215,19 +214,31 @@ impl WaylandObject for XdgWmBase {
 			// ping
 			0 => {
 				let serial = u32::from_wire(payload)?;
-				pending.push(EventAction::Request(self.wl_pong(serial)?));
+				pending.push(EventAction::Request(self.wl_pong(serial)));
 			}
-			inv => return Err(WaylandError::InvalidOpCode(inv, self.as_str()).boxed()),
+			inv => return Err(WaylandError::InvalidOpCode(inv, self.kind_as_str()).boxed()),
 		}
 		Ok(pending)
 	}
 
-	fn as_str(&self) -> &'static str {
-		WaylandObjectKind::XdgWmBase.as_str()
+	fn kind(&self) -> WaylandObjectKind {
+		WaylandObjectKind::XdgWmBase
+	}
+
+	fn kind_as_str(&self) -> &'static str {
+		self.kind().as_str()
 	}
 }
 
 impl WaylandObject for XdgSurface {
+	fn id(&self) -> Id {
+		self.id
+	}
+
+	fn god(&self) -> WeRcGod {
+		self.god.clone()
+	}
+
 	fn handle(
 		&mut self,
 		opcode: super::OpCode,
@@ -239,23 +250,35 @@ impl WaylandObject for XdgSurface {
 			0 => {
 				pending.push(EventAction::DebugMessage(
 					DebugLevel::Important,
-					format!("{} | configure received, acking", self.as_str()),
+					format!("{} | configure received, acking", self.kind_as_str()),
 				));
 				self.is_configured = true;
 				let serial = u32::from_wire(payload)?;
-				pending.push(EventAction::Request(self.wl_ack_configure(serial)?));
+				pending.push(EventAction::Request(self.wl_ack_configure(serial)));
 			}
-			inv => return Err(WaylandError::InvalidOpCode(inv, self.as_str()).boxed()),
+			inv => return Err(WaylandError::InvalidOpCode(inv, self.kind_as_str()).boxed()),
 		}
 		Ok(pending)
 	}
 
-	fn as_str(&self) -> &'static str {
-		WaylandObjectKind::XdgSurface.as_str()
+	fn kind(&self) -> WaylandObjectKind {
+		WaylandObjectKind::XdgSurface
+	}
+
+	fn kind_as_str(&self) -> &'static str {
+		self.kind().as_str()
 	}
 }
 
 impl WaylandObject for XdgTopLevel {
+	fn id(&self) -> Id {
+		self.id
+	}
+
+	fn god(&self) -> WeRcGod {
+		self.god.clone()
+	}
+
 	fn handle(
 		&mut self,
 		opcode: super::OpCode,
@@ -281,7 +304,7 @@ impl WaylandObject for XdgTopLevel {
 					DebugLevel::Important,
 					format!(
 						"{} | configure // w: {}, h: {}, states: {:?}",
-						self.as_str(),
+						self.kind_as_str(),
 						w,
 						h,
 						states
@@ -296,7 +319,7 @@ impl WaylandObject for XdgTopLevel {
 				self.close_requested = true;
 				pending.push(EventAction::DebugMessage(
 					DebugLevel::Important,
-					format!("{} | close requested", self.as_str()),
+					format!("{} | close requested", self.kind_as_str()),
 				));
 			}
 			// configure_bounds
@@ -307,12 +330,16 @@ impl WaylandObject for XdgTopLevel {
 			3 => {
 				todo!()
 			}
-			inv => return Err(WaylandError::InvalidOpCode(inv, self.as_str()).boxed()),
+			inv => return Err(WaylandError::InvalidOpCode(inv, self.kind_as_str()).boxed()),
 		}
 		Ok(pending)
 	}
 
-	fn as_str(&self) -> &'static str {
-		WaylandObjectKind::XdgTopLevel.as_str()
+	fn kind(&self) -> WaylandObjectKind {
+		WaylandObjectKind::XdgTopLevel
+	}
+
+	fn kind_as_str(&self) -> &'static str {
+		self.kind().as_str()
 	}
 }

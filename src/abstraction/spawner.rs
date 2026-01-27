@@ -76,6 +76,7 @@ impl<'a> TopLevelWindowSpawner<'a> {
 			&self.parent.compositor.borrow_mut().make_surface()?
 		};
 		let shm_pool = self.parent.shm.borrow_mut().make_pool(w * h * pf.width())?;
+		self.parent.god.borrow_mut().handle_events()?;
 		let xdg_wm_base = XdgWmBase::new_bound(self.parent.registry.clone())?;
 		let xdg_surface = xdg_wm_base.borrow_mut().make_xdg_surface(surface.clone())?;
 		let xdg_toplevel =

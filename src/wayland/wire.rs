@@ -235,6 +235,10 @@ impl MessageManager {
 		}
 		Ok(ctr)
 	}
+
+	pub fn queue_request(&mut self, req: WireRequest, kind: WaylandObjectKind) {
+		self.q.push_back(QueueEntry::Request((req, kind)));
+	}
 }
 
 impl WireArgument {

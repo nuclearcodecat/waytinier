@@ -36,17 +36,15 @@ impl Surface {
 	}
 
 	pub fn destroy(&self) -> Result<(), Box<dyn Error>> {
-		self.god.upgrade().to_wl_err()?.borrow().wlmm.send_request(&mut self.wl_destroy())
-		// id should be freed by the compositor
-		// self.god.borrow_mut().wlim.free_id(self.id)?;
+		self.queue_request(self.wl_destroy())
 	}
 
-	pub(crate) fn wl_attach(&self, buf_id: Id) -> Result<WireRequest, Box<dyn Error>> {
-		Ok(WireRequest {
+	pub(crate) fn wl_attach(&self, buf_id: Id) -> WireRequest {
+		WireRequest {
 			sender_id: self.id,
 			opcode: 1,
 			args: vec![WireArgument::Obj(buf_id), WireArgument::UnInt(0), WireArgument::UnInt(0)],
-		})
+		}
 	}
 
 	pub fn attach_buffer_obj(&mut self, to_att: RcCell<Buffer>) -> Result<(), Box<dyn Error>> {
@@ -56,15 +54,7 @@ impl Surface {
 
 	pub fn attach_buffer(&mut self) -> Result<(), Box<dyn Error>> {
 		let buf = self.attached_buf.clone().ok_or(WaylandError::BufferObjectNotAttached)?;
-		let entry = QueueEntry::Request((self.wl_attach(buf.borrow().id)?, WaylandObjectKind::Surface));
-		self.god
-			.upgrade()
-			.to_wl_err()?
-			.borrow_mut()
-			.wlmm
-			.q
-			.push_back(entry);
-		Ok(())
+		self.queue_request(self.wl_attach(buf.borrow().id))
 	}
 
 	pub(crate) fn wl_commit(&self) -> WireRequest {
@@ -76,11 +66,11 @@ impl Surface {
 	}
 
 	pub fn commit(&self) -> Result<(), Box<dyn Error>> {
-		self.god.upgrade().to_wl_err()?.borrow().wlmm.send_request(&mut self.wl_commit())
+		self.queue_request(self.wl_commit())
 	}
 
-	pub(crate) fn wl_damage_buffer(&self, region: Region) -> Result<WireRequest, Box<dyn Error>> {
-		Ok(WireRequest {
+	pub(crate) fn wl_damage_buffer(&self, region: Region) -> WireRequest {
+		WireRequest {
 			sender_id: self.id,
 			opcode: 9,
 			args: vec![
@@ -89,54 +79,51 @@ impl Surface {
 				WireArgument::Int(region.w),
 				WireArgument::Int(region.h),
 			],
-		})
+		}
 	}
 
 	pub fn damage_buffer(&self, region: Region) -> Result<(), Box<dyn Error>> {
-		self.god
-			.upgrade()
-			.to_wl_err()?
-			.borrow()
-			.wlmm
-			.send_request(&mut self.wl_damage_buffer(region)?)
+		self.queue_request(self.wl_damage_buffer(region))
 	}
 
 	pub fn repaint(&self) -> Result<(), Box<dyn Error>> {
 		if let Some(buf) = &self.attached_buf {
 			let buf = buf.borrow();
-			self.god.upgrade().to_wl_err()?.borrow().wlmm.send_request(
-				&mut self.wl_damage_buffer(Region {
+			self.queue_request(self.wl_damage_buffer(Region {
 					x: 0,
 					y: 0,
 					w: buf.width,
 					h: buf.height,
-				})?,
-			)?;
-		};
-		Ok(())
+			}))
+		} else {
+			Err(WaylandError::BufferObjectNotAttached.boxed())
+		}
 	}
 
-	pub(crate) fn wl_frame(&self, id: Id) -> Result<WireRequest, Box<dyn Error>> {
-		Ok(WireRequest {
+	pub(crate) fn wl_frame(&self, id: Id) -> WireRequest {
+		WireRequest {
 			sender_id: self.id,
 			opcode: 3,
 			args: vec![WireArgument::NewId(id)],
-		})
+		}
 	}
 
 	pub fn frame(&self) -> Result<RcCell<Callback>, Box<dyn Error>> {
 		let cb = Callback::new(self.god.clone())?;
-		self.god
-			.upgrade()
-			.to_wl_err()?
-			.borrow()
-			.wlmm
-			.send_request(&mut self.wl_frame(cb.borrow().id)?)?;
+		self.queue_request(self.wl_frame(cb.borrow().id))?;
 		Ok(cb)
 	}
 }
 
 impl WaylandObject for Surface {
+	fn id(&self) -> Id {
+		self.id
+	}
+
+	fn god(&self) -> WeRcGod {
+		self.god.clone()
+	}
+
 	fn handle(
 		&mut self,
 		_opcode: super::OpCode,
@@ -145,7 +132,13 @@ impl WaylandObject for Surface {
 		todo!()
 	}
 
-	fn as_str(&self) -> &'static str {
-		WaylandObjectKind::Surface.as_str()
+	#[inline]
+	fn kind(&self) -> WaylandObjectKind {
+		WaylandObjectKind::Surface
+	}
+
+	#[inline]
+	fn kind_as_str(&self) -> &'static str {
+		self.kind().as_str()
 	}
 }

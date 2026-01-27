@@ -65,7 +65,7 @@ impl SharedMemory {
 		self.valid_pix_formats.insert(pf);
 	}
 
-	pub fn new_bound_initialized(
+	pub(crate) fn new_bound_initialized(
 		registry: RcCell<Registry>,
 		god: RcCell<God>,
 	) -> Result<RcCell<Self>, Box<dyn Error>> {
@@ -91,13 +91,14 @@ impl SharedMemory {
 		Ok(CString::new(name)?)
 	}
 
-	pub fn make_pool(&mut self, size: i32) -> Result<RcCell<SharedMemoryPool>, Box<dyn Error>> {
+	// call handle_events after!!
+	pub(crate) fn make_pool(&mut self, size: i32) -> Result<RcCell<SharedMemoryPool>, Box<dyn Error>> {
 		let name = self.make_unique_pool_name()?;
 		let fd = unsafe { shm_open(name.as_ptr(), O_RDWR | O_CREAT, 0) };
 		if fd == -1 {
 			return Err(Box::new(std::io::Error::last_os_error()));
 		}
-		wlog!(DebugLevel::Important, self.as_str(), format!("new pool fd: {}", fd), WHITE, NONE);
+		wlog!(DebugLevel::Important, self.kind_as_str(), format!("new pool fd: {}", fd), WHITE, NONE);
 		if unsafe { ftruncate(fd, size.into()) } == -1 {
 			return Err(Box::new(std::io::Error::last_os_error()));
 		}
@@ -115,7 +116,7 @@ impl SharedMemory {
 		let mut shmpool_ = shmpool_.borrow_mut();
 		shmpool_.id = id;
 		shmpool_.update_ptr()?;
-		self.wl_create_pool(size, fd, id)?;
+		self.create_pool(size, fd, id)?;
 		Ok(shmpool)
 	}
 
@@ -124,8 +125,8 @@ impl SharedMemory {
 		size: i32,
 		fd: RawFd,
 		id: Id,
-	) -> Result<(), Box<dyn Error>> {
-		self.god.upgrade().to_wl_err()?.borrow().wlmm.send_request(&mut WireRequest {
+	) -> WireRequest {
+		WireRequest {
 			sender_id: self.id,
 			opcode: 0,
 			args: vec![
@@ -134,7 +135,11 @@ impl SharedMemory {
 				WireArgument::FileDescriptor(fd),
 				WireArgument::Int(size),
 			],
-		})
+		}
+	}
+
+	pub(crate) fn create_pool(&self, size: i32, fd: RawFd, id: Id) -> Result<(), Box<dyn Error>> {
+		self.queue_request(self.wl_create_pool(size, fd, id))
 	}
 }
 
@@ -228,10 +233,7 @@ impl SharedMemoryPool {
 	}
 
 	pub fn destroy(&self) -> Result<(), Box<dyn Error>> {
-		let god = self.god.upgrade().to_wl_err()?;
-		let mut god = god.borrow_mut();
-		god.wlmm.send_request(&mut self.wl_destroy())?;
-		god.wlim.free_id(self.id)?;
+		self.queue_request(self.wl_destroy())?;
 		self.unmap()?;
 		self.unlink()?;
 		self.close()?;
@@ -263,7 +265,7 @@ impl SharedMemoryPool {
 		}
 		pending.push(EventAction::DebugMessage(
 			DebugLevel::Important,
-			format!("{} | RESIZE size {size}", self.as_str()),
+			format!("{} | RESIZE size {size}", self.kind_as_str()),
 		));
 		self.unmap()?;
 		self.size = size;
@@ -280,6 +282,14 @@ impl SharedMemoryPool {
 }
 
 impl WaylandObject for SharedMemory {
+	fn id(&self) -> Id {
+		self.id
+	}
+
+	fn god(&self) -> WeRcGod {
+		self.god.clone()
+	}
+
 	fn handle(
 		&mut self,
 		opcode: super::OpCode,
@@ -303,18 +313,30 @@ impl WaylandObject for SharedMemory {
 				}
 			}
 			inv => {
-				return Err(WaylandError::InvalidOpCode(inv, self.as_str()).boxed());
+				return Err(WaylandError::InvalidOpCode(inv, self.kind_as_str()).boxed());
 			}
 		}
 		Ok(pending)
 	}
 
-	fn as_str(&self) -> &'static str {
-		WaylandObjectKind::SharedMemory.as_str()
+	fn kind(&self) -> WaylandObjectKind {
+		WaylandObjectKind::SharedMemory
+	}
+
+	fn kind_as_str(&self) -> &'static str {
+		self.kind().as_str()
 	}
 }
 
 impl WaylandObject for SharedMemoryPool {
+	fn id(&self) -> Id {
+		self.id
+	}
+
+	fn god(&self) -> WeRcGod {
+		self.god.clone()
+	}
+
 	fn handle(
 		&mut self,
 		_opcode: super::OpCode,
@@ -323,7 +345,11 @@ impl WaylandObject for SharedMemoryPool {
 		todo!()
 	}
 
-	fn as_str(&self) -> &'static str {
-		WaylandObjectKind::SharedMemoryPool.as_str()
+	fn kind(&self) -> WaylandObjectKind {
+		WaylandObjectKind::SharedMemoryPool
+	}
+
+	fn kind_as_str(&self) -> &'static str {
+		self.kind().as_str()
 	}
 }

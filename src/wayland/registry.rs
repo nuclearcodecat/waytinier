@@ -1,7 +1,7 @@
 use std::{collections::HashMap, error::Error};
 
 use crate::{NONE, WHITE, wayland::{
-	DebugLevel, EventAction, ExpectRc, OpCode, WaylandError, WaylandObject, WaylandObjectKind,
+	DebugLevel, EventAction, OpCode, WaylandError, WaylandObject, WaylandObjectKind,
 	WeRcGod,
 	wire::{FromWirePayload, Id, WireArgument, WireRequest},
 }, wlog};
@@ -40,9 +40,8 @@ impl Registry {
 			.map(|(k, _)| k)
 			.copied()
 			.ok_or(WaylandError::NotInRegistry)?;
-		wlog!(DebugLevel::Important, self.as_str(), format!("bind global id for {}: {}", object.as_str(), global_id), WHITE, NONE);
-
-		self.god.upgrade().to_wl_err()?.borrow().wlmm.send_request(&mut WireRequest {
+		wlog!(DebugLevel::Important, self.kind_as_str(), format!("bind global id for {}: {}", object.as_str(), global_id), WHITE, NONE);
+		self.queue_request(WireRequest {
 			// wl_registry id
 			sender_id: self.id,
 			// first request in the proto
@@ -52,8 +51,7 @@ impl Registry {
 				// WireArgument::NewId(new_id),
 				WireArgument::NewIdSpecific(object.as_str(), version, id),
 			],
-		})?;
-		Ok(())
+		})
 	}
 
 	pub(crate) fn bind(
@@ -72,6 +70,14 @@ impl Registry {
 }
 
 impl WaylandObject for Registry {
+	fn id(&self) -> Id {
+		self.id
+	}
+
+	fn god(&self) -> WeRcGod {
+		self.god.clone()
+	}
+
 	fn handle(
 		&mut self,
 		opcode: OpCode,
@@ -100,13 +106,17 @@ impl WaylandObject for Registry {
 				todo!()
 			}
 			inv => {
-				return Err(WaylandError::InvalidOpCode(inv, self.as_str()).boxed());
+				return Err(WaylandError::InvalidOpCode(inv, self.kind_as_str()).boxed());
 			}
 		}
 		Ok(pending)
 	}
 
-	fn as_str(&self) -> &'static str {
-		WaylandObjectKind::Registry.as_str()
+	fn kind(&self) -> WaylandObjectKind {
+		WaylandObjectKind::Registry
+	}
+
+	fn kind_as_str(&self) -> &'static str {
+		self.kind().as_str()
 	}
 }

@@ -38,6 +38,7 @@ impl App {
 		god.borrow_mut().handle_events()?;
 		let compositor = Compositor::new_bound(registry.clone(), god.clone())?;
 		let shm = SharedMemory::new_bound_initialized(registry.clone(), god.clone())?;
+		god.borrow_mut().handle_events()?;
 
 		Ok(Self {
 			god,
@@ -103,7 +104,7 @@ impl App {
 						(0, surf.w, surf.h),
 						pf,
 						self.god.clone(),
-					)?;
+					);
 					pres.shm_pool.borrow_mut().resize_if_larger(surf.w * surf.h * width)?;
 					surf.attach_buffer_obj(buf)?;
 					surf.commit()?;

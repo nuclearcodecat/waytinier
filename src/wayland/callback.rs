@@ -8,7 +8,7 @@ use crate::wayland::{
 
 pub struct Callback {
 	pub(crate) id: Id,
-	pub(crate) _god: WeRcGod,
+	pub(crate) god: WeRcGod,
 	pub done: bool,
 	pub data: Option<u32>,
 }
@@ -17,7 +17,7 @@ impl Callback {
 	pub(crate) fn new(god: WeRcGod) -> Result<RcCell<Self>, Box<dyn Error>> {
 		let cb = Rc::new(RefCell::new(Self {
 			id: 0,
-			_god: god.clone(),
+			god: god.clone(),
 			done: false,
 			data: None,
 		}));
@@ -30,14 +30,17 @@ impl Callback {
 		cb.borrow_mut().id = id;
 		Ok(cb)
 	}
-
-	#[allow(dead_code)]
-	pub(crate) fn destroy(&self) -> Result<(), Box<dyn Error>> {
-		self._god.upgrade().to_wl_err()?.borrow_mut().wlim.free_id(self.id)
-	}
 }
 
 impl WaylandObject for Callback {
+	fn id(&self) -> Id {
+		self.id
+	}
+
+	fn god(&self) -> WeRcGod {
+		self.god.clone()
+	}
+
 	fn handle(
 		&mut self,
 		opcode: super::OpCode,
@@ -55,13 +58,19 @@ impl WaylandObject for Callback {
 				));
 			}
 			inv => {
-				return Err(WaylandError::InvalidOpCode(inv, self.as_str()).boxed());
+				return Err(WaylandError::InvalidOpCode(inv, self.kind_as_str()).boxed());
 			}
 		}
 		Ok(pending)
 	}
 
-	fn as_str(&self) -> &'static str {
-		WaylandObjectKind::Callback.as_str()
+	#[inline]
+	fn kind(&self) -> WaylandObjectKind {
+		WaylandObjectKind::Callback
+	}
+
+	#[inline]
+	fn kind_as_str(&self) -> &'static str {
+		self.kind().as_str()
 	}
 }

@@ -54,6 +54,14 @@ impl Compositor {
 }
 
 impl WaylandObject for Compositor {
+	fn id(&self) -> Id {
+		self.id
+	}
+
+	fn god(&self) -> WeRcGod {
+		self.god.clone()
+	}
+
 	fn handle(
 		&mut self,
 		_opcode: super::OpCode,
@@ -62,7 +70,13 @@ impl WaylandObject for Compositor {
 		todo!()
 	}
 
-	fn as_str(&self) -> &'static str {
-		WaylandObjectKind::Compositor.as_str()
+	#[inline]
+	fn kind(&self) -> WaylandObjectKind {
+		WaylandObjectKind::Compositor
+	}
+
+	#[inline]
+	fn kind_as_str(&self) -> &'static str {
+		self.kind().as_str()
 	}
 }
