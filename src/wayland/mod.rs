@@ -152,10 +152,7 @@ impl God {
 					let surf = xdgs.wl_surface.upgrade().to_wl_err()?;
 					let mut surf = surf.borrow_mut();
 
-
-					if surf.w != 0 || surf.h != 0 {
-
-						let buf_ = surf.attached_buf.clone().ok_or(WaylandError::ObjectNonExistent)?;
+					if let Some(buf_) = surf.attached_buf.clone() {
 						let mut buf = buf_.borrow_mut();
 						wlog!(
 							DebugLevel::Important,
@@ -168,6 +165,14 @@ impl God {
 							self.wlim.new_id_registered(WaylandObjectKind::Buffer, buf_.clone());
 						let acts = buf.resize(new_buf_id, (w, h))?;
 						actions.extend_front(acts);
+					} else {
+						wlog!(
+							DebugLevel::Important,
+							"event handler",
+							"buf not present at resize",
+							CYAN,
+							YELLOW
+						);
 					}
 
 					surf.w = w;
@@ -227,13 +232,7 @@ pub struct IdentManager {
 impl IdentManager {
 	pub(crate) fn new_id(&mut self) -> Id {
 		self.top_id += 1;
-		wlog!(
-			DebugLevel::Trivial,
-			"wlim",
-			format!("new id picked: {}", self.top_id),
-			YELLOW,
-			NONE
-		);
+		wlog!(DebugLevel::Trivial, "wlim", format!("new id picked: {}", self.top_id), YELLOW, NONE);
 		self.top_id
 	}
 

@@ -158,7 +158,12 @@ impl XdgTopLevel {
 
 	pub fn set_app_id(&mut self, id: &str) -> Result<(), Box<dyn Error>> {
 		self.appid = Some(id.to_string());
-		self.god.upgrade().to_wl_err()?.borrow().wlmm.send_request(&mut self.wl_set_app_id(id.to_string())?)
+		self.god
+			.upgrade()
+			.to_wl_err()?
+			.borrow()
+			.wlmm
+			.send_request(&mut self.wl_set_app_id(id.to_string())?)
 	}
 
 	pub(crate) fn wl_set_title(&self, id: String) -> Result<WireRequest, Box<dyn Error>> {
@@ -171,7 +176,12 @@ impl XdgTopLevel {
 
 	pub fn set_title(&mut self, id: &str) -> Result<(), Box<dyn Error>> {
 		self.title = Some(id.to_string());
-		self.god.upgrade().to_wl_err()?.borrow().wlmm.send_request(&mut self.wl_set_title(id.to_string())?)
+		self.god
+			.upgrade()
+			.to_wl_err()?
+			.borrow()
+			.wlmm
+			.send_request(&mut self.wl_set_title(id.to_string())?)
 	}
 }
 

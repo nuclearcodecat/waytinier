@@ -95,11 +95,9 @@ impl MessageManager {
 		let env = env::var("WAYLAND_DISPLAY");
 		match env {
 			Ok(x) => Ok(Self::new(&x)?),
-			Err(er) => {
-				match er {
-					std::env::VarError::NotPresent => Err(WaylandError::NoWaylandDisplay.boxed()),
-					_ => Err(Box::new(er))
-				}
+			Err(er) => match er {
+				std::env::VarError::NotPresent => Err(WaylandError::NoWaylandDisplay.boxed()),
+				_ => Err(Box::new(er)),
 			},
 		}
 	}

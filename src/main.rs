@@ -1,16 +1,31 @@
+// todo
+// - stuff everything into lib
+
 #![allow(dead_code)]
 use std::{
-	cell::RefCell, error::Error, fs::File, io::{BufRead, BufReader, Read}, rc::Rc
+	cell::RefCell,
+	error::Error,
+	fs::File,
+	io::{BufRead, BufReader, Read},
+	rc::Rc,
 };
 
 use wayland_raw::{
 	init_logger,
 	wayland::{
-		ExpectRc, God, RcCell, WeakCell, buffer::Buffer, callback::Callback, compositor::Compositor, display::Display, registry::Registry, shm::{PixelFormat, SharedMemory, SharedMemoryPool}, surface::Surface, xdgshell::{XdgSurface, XdgTopLevel, XdgWmBase}
+		ExpectRc, God, RcCell, WeakCell,
+		buffer::Buffer,
+		callback::Callback,
+		compositor::Compositor,
+		display::Display,
+		registry::Registry,
+		shm::{PixelFormat, SharedMemory, SharedMemoryPool},
+		surface::Surface,
+		xdgshell::{XdgSurface, XdgTopLevel, XdgWmBase},
 	},
 };
 
-struct App<S> {
+struct App {
 	god: RcCell<God>,
 	display: RcCell<Display>,
 	registry: RcCell<Registry>,
@@ -18,13 +33,10 @@ struct App<S> {
 	surfaces: Vec<RcCell<Surface>>,
 	shm: RcCell<SharedMemory>,
 	media: Vec<RcCell<Medium>>,
-	on_frame: Option<Box<dyn Fn()>>,
-	on_init: Option<Box<dyn Fn()>>,
-	state: S,
 }
 
-impl<S> App<S> {
-	fn new(state: S) -> Result<Self, Box<dyn Error>> {
+impl App {
+	fn new() -> Result<Self, Box<dyn Error>> {
 		init_logger();
 
 		let god = God::new_default()?;
@@ -43,9 +55,6 @@ impl<S> App<S> {
 			surfaces: vec![],
 			shm,
 			media: vec![],
-			on_frame: None,
-			on_init: None,
-			state,
 		})
 	}
 
@@ -53,7 +62,7 @@ impl<S> App<S> {
 		match &medium {
 			Medium::Window(tlw) => {
 				tlw.surface.upgrade().to_wl_err()?.borrow_mut().commit()?;
-			},
+			}
 		};
 		let medium = Rc::new(RefCell::new(medium));
 		self.media.push(medium.clone());
@@ -64,17 +73,19 @@ impl<S> App<S> {
 		self.compositor.borrow_mut().make_surface()
 	}
 
-	fn work(&mut self) -> Result<(), Box<dyn Error>> {
+	fn work<F, S>(&mut self, state: &mut S, mut render_fun: F) -> Result<(), Box<dyn Error>>
+	where
+		F: FnMut(&mut S, Snapshot),
+	{
 		let mut window = self.media[0].borrow_mut();
 		let Medium::Window(ref mut window) = *window;
-		let (img_w, img_h, machine) = parse_pix("pix.ppm")?;
 		let mut frame: usize = 0;
+
 		let mut cb: Option<RcCell<Callback>> = None;
-		let mut rdy1 = false;
-		let mut rdy2 = false;
 		loop {
 			self.god.borrow_mut().handle_events()?;
 
+			// check if user wants to close window - the cb might not be a good idea
 			if window.xdg_toplevel.borrow().close_requested && (window.close_cb)() {
 				break Ok(());
 			};
@@ -87,28 +98,22 @@ impl<S> App<S> {
 				let surf = window.surface.upgrade().to_wl_err()?;
 				let mut surf = surf.borrow_mut();
 				if surf.attached_buf.is_none() {
-					if surf.w > 0 && surf.h > 0 {
-						let buf = Buffer::new_initalized(
-							window.shm_pool.clone(), 
-							(0, surf.w, surf.h), 
-							PixelFormat::Xrgb888, 
-							self.god.clone()
-						)?;
-						surf.attach_buffer_obj(buf)?;
-						surf.commit()?;
-						drop(surf);
-						self.god.borrow_mut().handle_events()?;
-					}
-					rdy1 = true;
+					let buf = Buffer::new_initalized(
+						window.shm_pool.clone(),
+						(0, surf.w, surf.h),
+						PixelFormat::Xrgb888,
+						self.god.clone(),
+					)?;
+					surf.attach_buffer_obj(buf)?;
+					surf.commit()?;
+					drop(surf);
+					self.god.borrow_mut().handle_events()?;
 					continue;
 				}
 
 				if ready {
 					let new_cb = surf.frame()?;
 					cb = Some(new_cb);
-
-					let (r, g, b) = hsv_to_rgb((frame % 360) as f64, 1.0, 1.0);
-
 					frame = frame.wrapping_add(1);
 
 					unsafe {
@@ -116,42 +121,19 @@ impl<S> App<S> {
 						let buf = surf.attached_buf.clone().ok_or("no buffer")?;
 						let buf = buf.borrow();
 
-						let start_x = buf.width as isize / 2 - img_w as isize / 2;
-						let start_y = buf.height as isize / 2 - img_h as isize / 2;
+						let ss = Snapshot {
+							buf: slice,
+							w: buf.width,
+							h: buf.height,
+							pf: buf.format,
+							frame,
+						};
 
-						for y in 0..buf.height as usize {
-							for x in 0..buf.width as usize {
-								let surface_ix = (buf.width as usize * y + x) * 4;
-
-								let rel_x = x as isize - start_x;
-								let rel_y = y as isize - start_y;
-
-								if rel_x >= 0
-									&& rel_x < img_w as isize
-										&& rel_y >= 0 && rel_y < img_h as isize
-								{
-									let img_ix = (rel_y as usize * img_w + rel_x as usize) * 3;
-									if rdy2 == true {
-										slice[surface_ix + 2] = machine[img_ix];
-										slice[surface_ix + 1] = machine[img_ix + 1];
-										slice[surface_ix] = machine[img_ix + 2];
-									}
-								} else {
-									if rdy2 == true {
-										slice[surface_ix] = b.wrapping_sub(x as u8);
-										slice[surface_ix + 1] = g.wrapping_add(y as u8);
-										slice[surface_ix + 2] = r.wrapping_shl(x as u32);
-									}
-								}
-							}
-						}
+						render_fun(state, ss);
 					}
 					surf.attach_buffer()?;
 					surf.repaint()?;
 					surf.commit()?;
-					if rdy1 {
-						rdy2 = true
-					}
 				}
 			}
 		}
@@ -173,23 +155,23 @@ struct TopLevelWindow {
 }
 
 impl TopLevelWindow {
-	fn spawner<'a, S>(parent: &'a mut App<S>) -> TopLevelWindowSpawner<'a, S> {
+	fn spawner<'a>(parent: &'a mut App) -> TopLevelWindowSpawner<'a> {
 		TopLevelWindowSpawner::new(None, parent)
 	}
 }
 
-struct TopLevelWindowSpawner<'a, S> {
+struct TopLevelWindowSpawner<'a> {
 	app_id: Option<String>,
 	title: Option<String>,
 	width: Option<i32>,
 	height: Option<i32>,
 	pf: Option<PixelFormat>,
 	sur: Option<RcCell<Surface>>,
-	parent: &'a mut App<S>,
+	parent: &'a mut App,
 	close_cb: Option<Box<dyn Fn() -> bool>>,
 }
 
-impl<'a, S> TopLevelWindowSpawner<'a, S> {
+impl<'a> TopLevelWindowSpawner<'a> {
 	fn with_app_id(&mut self, app_id: String) {
 		self.app_id = Some(app_id);
 	}
@@ -218,7 +200,7 @@ impl<'a, S> TopLevelWindowSpawner<'a, S> {
 		self.close_cb = Some(cb);
 	}
 
-	fn new(wl_surface: Option<RcCell<Surface>>, parent: &'a mut App<S>) -> Self {
+	fn new(wl_surface: Option<RcCell<Surface>>, parent: &'a mut App) -> Self {
 		Self {
 			sur: wl_surface,
 			parent,
@@ -243,12 +225,13 @@ impl<'a, S> TopLevelWindowSpawner<'a, S> {
 		let close_cb = if let Some(fun) = self.close_cb {
 			fun
 		} else {
-			Box::new(|| { true })
+			Box::new(|| true)
 		};
 		let shm_pool = self.parent.shm.borrow_mut().make_pool(w * h * pf.width())?;
 		let xdg_wm_base = XdgWmBase::new_bound(self.parent.registry.clone())?;
 		let xdg_surface = xdg_wm_base.borrow_mut().make_xdg_surface(surface.clone())?;
-		let xdg_toplevel = XdgTopLevel::new_from_xdg_surface(xdg_surface.clone(), self.parent.god.clone())?;
+		let xdg_toplevel =
+			XdgTopLevel::new_from_xdg_surface(xdg_surface.clone(), self.parent.god.clone())?;
 		{
 			let mut xdgtl = xdg_toplevel.borrow_mut();
 			if let Some(x) = &self.app_id {
@@ -270,131 +253,63 @@ impl<'a, S> TopLevelWindowSpawner<'a, S> {
 	}
 }
 
-// user-made struct, hide all the above in lib
+struct Snapshot<'a> {
+	buf: &'a mut [u8],
+	w: i32,
+	h: i32,
+	pf: PixelFormat,
+	frame: usize,
+}
+
+// user-made struct, hide all of the above in lib
 struct AppState {
+	img_w: usize,
+	img_h: usize,
+	machine: Vec<u8>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-	let state = AppState {};
-	let mut app = App::new(state)?;
+	let mut app = App::new()?;
 	let window = TopLevelWindow::spawner(&mut app).spawn()?;
-	let window = app.push_medium(window)?;
+	app.push_medium(window)?;
 
-	app.work()
+	let (img_w, img_h, machine) = parse_pix("pix.ppm")?;
+	let mut state = AppState {
+		img_w,
+		img_h,
+		machine,
+	};
+
+	app.work(&mut state, |state, ss| {
+		let (r, g, b) = hsv_to_rgb((ss.frame % 360) as f64, 1.0, 1.0);
+		let start_x = ss.w as isize / 2 - state.img_w as isize / 2;
+		let start_y = ss.h as isize / 2 - state.img_h as isize / 2;
+
+		for y in 0..ss.h as usize {
+			for x in 0..ss.w as usize {
+				let surface_ix = (ss.w as usize * y + x) * 4;
+
+				let rel_x = x as isize - start_x;
+				let rel_y = y as isize - start_y;
+
+				if rel_x >= 0
+					&& rel_x < state.img_w as isize
+					&& rel_y >= 0 && rel_y < state.img_h as isize
+				{
+					let img_ix = (rel_y as usize * img_w + rel_x as usize) * 3;
+					ss.buf[surface_ix + 2] = state.machine[img_ix];
+					ss.buf[surface_ix + 1] = state.machine[img_ix + 1];
+					ss.buf[surface_ix] = state.machine[img_ix + 2];
+				} else {
+					ss.buf[surface_ix] = b.wrapping_sub(x as u8);
+					ss.buf[surface_ix + 1] = g.wrapping_add(y as u8);
+					ss.buf[surface_ix + 2] = r.wrapping_shl(x as u32);
+				}
+			}
+		}
+	})
 }
 
-// fn main() -> Result<(), Box<dyn Error>> {
-// 	init_logger();
-// 	const W: i32 = 400;
-// 	const H: i32 = 400;
-//
-// 	let god = God::new_default()?;
-// 	let display = Display::new(god.clone())?;
-// 	let registry = display.borrow_mut().make_registry()?;
-// 	god.borrow_mut().handle_events()?;
-// 	let compositor = Compositor::new_bound(registry.clone(), god.clone())?;
-// 	let surface = compositor.borrow_mut().make_surface()?;
-// 	let shm = SharedMemory::new_bound_initialized(registry.clone(), god.clone())?;
-// 	let pf = PixelFormat::Xrgb888;
-// 	let shm_pool = shm.borrow_mut().make_pool(W * H * pf.width())?;
-// 	let xdg_wm_base = XdgWmBase::new_bound(registry)?;
-// 	let xdg_surface = xdg_wm_base.borrow_mut().make_xdg_surface(surface.clone())?;
-// 	let xdg_toplevel = XdgTopLevel::new_from_xdg_surface(xdg_surface.clone(), god.clone())?;
-// 	xdg_toplevel.borrow_mut().set_app_id(String::from("wayland-raw-appid"))?;
-// 	xdg_toplevel.borrow_mut().set_title(String::from("wayland-raw-title"))?;
-//
-// 	// let buf = Buffer::new_initalized(shm_pool.clone(), (0, W, H), pf, god.clone())?;
-// 	// surface.borrow_mut().attach_buffer_obj(buf.clone())?;
-// 	surface.borrow_mut().commit()?;
-// 	let mut frame: usize = 0;
-// 	let mut cb: Option<RcCell<Callback>> = None;
-//
-// 	let (img_w, img_h, machine) = parse_pix("pix.ppm")?;
-// 	let mut rdy1 = false;
-// 	let mut rdy2 = false;
-// 	loop {
-// 		god.borrow_mut().handle_events()?;
-//
-// 		if xdg_toplevel.borrow().close_requested {
-// 			break Ok(());
-// 		}
-// 		if xdg_surface.borrow().is_configured {
-// 			let ready = match &cb.clone() {
-// 				Some(cb) => cb.borrow().done,
-// 				None => true,
-// 			};
-//
-// 			let mut surf = surface.borrow_mut();
-// 			if surf.attached_buf.is_none() {
-// 				if surf.w > 0 && surf.h > 0 {
-// 					let buf = Buffer::new_initalized(
-// 						shm_pool.clone(), 
-// 						(0, surf.w, surf.h), 
-// 						pf, 
-// 						god.clone()
-// 					)?;
-// 					surf.attach_buffer_obj(buf)?;
-// 					surf.commit()?;
-// 					god.borrow_mut().handle_events()?;
-// 				}
-// 				rdy1 = true;
-// 				continue;
-// 			}
-//
-// 			if ready {
-// 				let new_cb = surf.frame()?;
-// 				cb = Some(new_cb);
-//
-// 				let (r, g, b) = hsv_to_rgb((frame % 360) as f64, 1.0, 1.0);
-//
-// 				frame = frame.wrapping_add(1);
-//
-// 				unsafe {
-// 					let slice = &mut *shm_pool.borrow_mut().slice.unwrap();
-// 					let buf = surf.attached_buf.clone().ok_or("no buffer")?;
-// 					let buf = buf.borrow();
-//
-// 					let start_x = buf.width as isize / 2 - img_w as isize / 2;
-// 					let start_y = buf.height as isize / 2 - img_h as isize / 2;
-//
-// 					for y in 0..buf.height as usize {
-// 						for x in 0..buf.width as usize {
-// 							let surface_ix = (buf.width as usize * y + x) * 4;
-//
-// 							let rel_x = x as isize - start_x;
-// 							let rel_y = y as isize - start_y;
-//
-// 							if rel_x >= 0
-// 								&& rel_x < img_w as isize
-// 								&& rel_y >= 0 && rel_y < img_h as isize
-// 							{
-// 								let img_ix = (rel_y as usize * img_w + rel_x as usize) * 3;
-// 								if rdy2 == true {
-// 								slice[surface_ix + 2] = machine[img_ix];
-// 								slice[surface_ix + 1] = machine[img_ix + 1];
-// 								slice[surface_ix] = machine[img_ix + 2];
-// 								}
-// 							} else {
-// 								if rdy2 == true {
-// 								slice[surface_ix] = b.wrapping_sub(x as u8);
-// 								slice[surface_ix + 1] = g.wrapping_add(y as u8);
-// 								slice[surface_ix + 2] = r.wrapping_shl(x as u32);
-// 								}
-// 							}
-// 						}
-// 					}
-// 				}
-// 				surf.attach_buffer()?;
-// 				surf.repaint()?;
-// 				surf.commit()?;
-// 				if rdy1 {
-// 					rdy2 = true
-// 				}
-// 			}
-// 		}
-// 	}
-// }
-//
 fn parse_pix(path: &str) -> Result<(usize, usize, Vec<u8>), Box<dyn Error>> {
 	let file = File::open(path)?;
 	let mut rd = BufReader::new(file);
