@@ -4,12 +4,13 @@ i will probably definitely absolutely 99.9%ly not release it on crates
 
 waytinier is tiny by design. the _machine_ example can open a window and draw an image while weighing a bit over 650KiB (with default cargo/rustc settings)
 with these cargo optimizations for size enabled, i managed to get the binary size down to ~380KiB:
- - stripping enabled
+ - elf stripping enabled
  - opt level set to »z«
  - lto set to »fat«
  - only one codegen unit enabled
  - panic unwinding disabled
 interestingly, setting the opt-level to »s« **increased** the "raw" binary's size by 4KiB and »z« increased it by **50KiB**!
+these settings increased the build times from ~0.7s to ~3.6s
 
 waytinier currently offers window (xdg_toplevel) creation and drawing on buffers.
 it is bare by design. it shouldn't be hard to extend functionality though.
