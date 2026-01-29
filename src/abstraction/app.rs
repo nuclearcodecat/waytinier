@@ -1,9 +1,21 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
 use crate::{
-	CYAN, DebugLevel, RED, abstraction::spawner::TopLevelWindowSpawner, dbug, init_logger, wait_for_sync, wayland::{
-		ExpectRc, God, RcCell, WeRcGod, WeakCell, buffer::Buffer, callback::Callback, compositor::Compositor, display::Display, registry::Registry, shm::{PixelFormat, SharedMemory, SharedMemoryPool}, surface::Surface, xdg_shell::{xdg_surface::XdgSurface, xdg_toplevel::XdgTopLevel, xdg_wm_base::XdgWmBase}
-	}, wlog
+	CYAN, DebugLevel, RED,
+	abstraction::spawner::TopLevelWindowSpawner,
+	init_logger, wait_for_sync,
+	wayland::{
+		ExpectRc, God, RcCell, WaylandObjectKind, WeRcGod, WeakCell,
+		buffer::Buffer,
+		callback::Callback,
+		compositor::Compositor,
+		display::Display,
+		registry::Registry,
+		shm::{PixelFormat, SharedMemory, SharedMemoryPool},
+		surface::Surface,
+		xdg_shell::{xdg_surface::XdgSurface, xdg_toplevel::XdgTopLevel, xdg_wm_base::XdgWmBase},
+	},
+	wlog,
 };
 
 #[allow(dead_code)]
@@ -48,7 +60,7 @@ impl App {
 	pub fn push_presenter(&mut self, presenter: Presenter) -> Result<usize, Box<dyn Error>> {
 		match &presenter.medium {
 			Medium::Window(tlw) => {
-				tlw.surface.upgrade().to_wl_err()?.borrow_mut().commit()?;
+				tlw.surface.borrow_mut().commit()?;
 			}
 		};
 		let presenter = Rc::new(RefCell::new(presenter));
@@ -61,6 +73,7 @@ impl App {
 		self.compositor.borrow_mut().make_surface()
 	}
 
+	// this state thing kinda stupid
 	pub fn work<F, S>(&mut self, state: &mut S, mut render_fun: F) -> Result<bool, Box<dyn Error>>
 	where
 		F: FnMut(&mut S, Snapshot),
@@ -85,8 +98,7 @@ impl App {
 					None => true,
 				};
 
-				let surf = window.surface.upgrade().to_wl_err()?;
-				let mut surf = surf.borrow_mut();
+				let mut surf = window.surface.borrow_mut();
 				if surf.attached_buf.is_none() {
 					let pf = PixelFormat::Xrgb888;
 					let width = pf.width();
@@ -155,7 +167,7 @@ pub struct TopLevelWindow {
 	pub(crate) xdg_wm_base: RcCell<XdgWmBase>,
 	pub(crate) shm_pool: RcCell<SharedMemoryPool>,
 	pub(crate) shm: WeakCell<SharedMemory>,
-	pub(crate) surface: WeakCell<Surface>,
+	pub(crate) surface: RcCell<Surface>,
 	pub(crate) close_cb: Box<dyn FnMut() -> bool>,
 	pub(crate) frame: usize,
 	pub(crate) frame_cb: Option<RcCell<Callback>>,
@@ -164,7 +176,7 @@ pub struct TopLevelWindow {
 
 impl TopLevelWindow {
 	pub fn spawner<'a>(parent: &'a mut App) -> TopLevelWindowSpawner<'a> {
-		TopLevelWindowSpawner::new(None, parent)
+		TopLevelWindowSpawner::new(parent)
 	}
 }
 
@@ -181,19 +193,44 @@ impl Drop for App {
 	fn drop(&mut self) {
 		let mut god = self.god.borrow_mut();
 		let len = god.wlim.idmap.len();
-		wlog!(DebugLevel::Important, "app", format!("dropping self and clearing wlim's idmap's {len} objects"), RED, CYAN);
+		wlog!(
+			DebugLevel::Important,
+			"app",
+			format!("dropping self and clearing wlim's idmap's {len} objects"),
+			RED,
+			CYAN
+		);
 		god.wlim.idmap.clear();
 	}
 }
 
 impl Drop for TopLevelWindow {
 	fn drop(&mut self) {
-		wlog!(DebugLevel::Important, "toplevelwindow", "dropping self and removing xdg_* from idmap", RED, CYAN);
+		wlog!(
+			DebugLevel::Important,
+			"toplevelwindow",
+			"dropping self and removing relevant objects from idmap",
+			RED,
+			CYAN
+		);
 		let god = self.god.upgrade().unwrap();
 		let mut god = god.borrow_mut();
-		let idmap = &mut god.wlim.idmap;
-		idmap.remove(&self.xdg_toplevel.borrow().id);
-		idmap.remove(&self.xdg_surface.borrow().id);
-		idmap.remove(&self.xdg_wm_base.borrow().id);
+		god.wlim.idmap.remove(&self.xdg_toplevel.borrow().id);
+		god.wlim.idmap.remove(&self.xdg_surface.borrow().id);
+		god.wlim.idmap.remove(&self.xdg_wm_base.borrow().id);
+		god.wlim.idmap.remove(&self.shm_pool.borrow().id);
+		match self.surface.borrow().attached_buf.clone().to_wl_err() {
+			Ok(b) => {
+				god.wlim.idmap.remove(&b.borrow().id);
+			}
+			Err(er) => wlog!(
+				DebugLevel::Error,
+				"toplevelwindow",
+				format!("failed to remove {}, error: {}", WaylandObjectKind::Buffer.as_str(), er),
+				RED,
+				RED
+			),
+		};
+		god.wlim.idmap.remove(&self.surface.borrow().id);
 	}
 }

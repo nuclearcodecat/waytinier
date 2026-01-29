@@ -1,11 +1,14 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
-use crate::{make_drop_impl, wayland::{
-	DebugLevel, EventAction, God, OpCode, RcCell, WaylandError, WaylandObject, WaylandObjectKind,
-	WeRcGod, WeakCell,
-	wire::{FromWirePayload, Id, WireArgument, WireRequest},
-	xdg_shell::xdg_surface::XdgSurface,
-}};
+use crate::{
+	make_drop_impl,
+	wayland::{
+		DebugLevel, EventAction, God, OpCode, RcCell, WaylandError, WaylandObject,
+		WaylandObjectKind, WeRcGod, WeakCell,
+		wire::{FromWirePayload, Id, WireArgument, WireRequest},
+		xdg_shell::xdg_surface::XdgSurface,
+	},
+};
 
 pub struct XdgTopLevel {
 	pub(crate) id: Id,

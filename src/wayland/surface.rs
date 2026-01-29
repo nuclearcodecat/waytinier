@@ -1,11 +1,13 @@
 use std::error::Error;
 
-use crate::wayland::{
-	EventAction, RcCell, WaylandError, WaylandObject, WaylandObjectKind, WeRcGod,
-	buffer::Buffer,
-	callback::Callback,
-	region::Region,
-	wire::{Id, WireArgument, WireRequest},
+use crate::{
+	make_drop_impl,
+	wayland::{
+		EventAction, RcCell, WaylandError, WaylandObject, WaylandObjectKind, WeRcGod,
+		buffer::Buffer,
+		callback::Callback,
+		wire::{Id, WireArgument, WireRequest},
+	},
 };
 
 pub struct Surface {
@@ -69,32 +71,31 @@ impl Surface {
 		self.queue_request(self.wl_commit())
 	}
 
-	pub(crate) fn wl_damage_buffer(&self, region: Region) -> WireRequest {
+	pub(crate) fn wl_damage_buffer(&self, x: i32, y: i32, w: i32, h: i32) -> WireRequest {
 		WireRequest {
 			sender_id: self.id,
 			opcode: 9,
 			args: vec![
-				WireArgument::Int(region.x),
-				WireArgument::Int(region.y),
-				WireArgument::Int(region.w),
-				WireArgument::Int(region.h),
+				WireArgument::Int(x),
+				WireArgument::Int(y),
+				WireArgument::Int(w),
+				WireArgument::Int(h),
 			],
 		}
 	}
 
-	pub fn damage_buffer(&self, region: Region) -> Result<(), Box<dyn Error>> {
-		self.queue_request(self.wl_damage_buffer(region))
+	pub fn damage_buffer(
+		&self,
+		(x, y): (i32, i32),
+		(w, h): (i32, i32),
+	) -> Result<(), Box<dyn Error>> {
+		self.queue_request(self.wl_damage_buffer(x, y, w, h))
 	}
 
 	pub fn repaint(&self) -> Result<(), Box<dyn Error>> {
 		if let Some(buf) = &self.attached_buf {
 			let buf = buf.borrow();
-			self.queue_request(self.wl_damage_buffer(Region {
-				x: 0,
-				y: 0,
-				w: buf.width,
-				h: buf.height,
-			}))
+			self.queue_request(self.wl_damage_buffer(0, 0, buf.width, buf.height))
 		} else {
 			Err(WaylandError::BufferObjectNotAttached.boxed())
 		}
@@ -142,3 +143,5 @@ impl WaylandObject for Surface {
 		self.kind().as_str()
 	}
 }
+
+make_drop_impl!(Surface, wl_destroy);

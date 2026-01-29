@@ -18,12 +18,27 @@ fn main() -> Result<(), Box<dyn Error>> {
 		.with_app_id("waytinier-demo")
 		.with_title("waytinier demo")
 		.spawn()?;
-	let window1_id = app.push_presenter(window)?;
-	let window = TopLevelWindow::spawner(&mut app)
-		.with_app_id("waytinier-demo2")
-		.with_title("waytinier demo2")
-		.spawn()?;
-	let window2_id = app.push_presenter(window)?;
+	let _ = app.push_presenter(window)?;
+	// let window = TopLevelWindow::spawner(&mut app)
+	// 	.with_app_id("waytinier-demo2")
+	// 	.with_title("waytinier demo2")
+	// 	.spawn()?;
+	// let _ = app.push_presenter(window)?;
+	// let window = TopLevelWindow::spawner(&mut app)
+	// 	.with_app_id("waytinier-demo3")
+	// 	.with_title("waytinier demo3")
+	// 	.spawn()?;
+	// let _ = app.push_presenter(window)?;
+	// let window = TopLevelWindow::spawner(&mut app)
+	// 	.with_app_id("waytinier-demo4")
+	// 	.with_title("waytinier demo4")
+	// 	.spawn()?;
+	// let _ = app.push_presenter(window)?;
+	// let window = TopLevelWindow::spawner(&mut app)
+	// 	.with_app_id("waytinier-demo5")
+	// 	.with_title("waytinier demo5")
+	// 	.spawn()?;
+	// let _ = app.push_presenter(window)?;
 
 	let (img_w, img_h, machine) = parse_pix("pix.ppm")?;
 	let mut state = AppState {
@@ -47,7 +62,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 					if rel_x >= 0
 						&& rel_x < state.img_w as isize
-							&& rel_y >= 0 && rel_y < state.img_h as isize
+						&& rel_y >= 0 && rel_y < state.img_h as isize
 					{
 						let img_ix = (rel_y as usize * img_w + rel_x as usize) * 3;
 						ss.buf[surface_ix + 2] = state.machine[img_ix];

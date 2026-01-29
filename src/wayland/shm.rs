@@ -1,16 +1,5 @@
-use std::{
-	cell::RefCell,
-	collections::HashSet,
-	error::Error,
-	ffi::CString,
-	os::{fd::RawFd, raw::c_void},
-	ptr::{self, null_mut},
-	rc::Rc,
-};
-// std depends on libc anyway so i consider using it fair
-// i may replace this with asm in the future but that means amd64 only
 use crate::{
-	NONE, WHITE, dbug,
+	CYAN, NONE, WHITE, dbug,
 	wayland::{
 		DebugLevel, EventAction, ExpectRc, God, RcCell, WaylandError, WaylandObject,
 		WaylandObjectKind, WeRcGod,
@@ -20,8 +9,17 @@ use crate::{
 	wlog,
 };
 use libc::{
-	MAP_FAILED, MAP_SHARED, O_CREAT, O_RDWR, PROT_READ, PROT_WRITE, close, ftruncate, mmap, munmap,
+	MAP_FAILED, MAP_SHARED, O_CREAT, O_RDWR, PROT_READ, PROT_WRITE, ftruncate, mmap, munmap,
 	shm_open, shm_unlink,
+};
+use std::{
+	cell::RefCell,
+	collections::HashSet,
+	error::Error,
+	ffi::CString,
+	os::{fd::RawFd, raw::c_void},
+	ptr::{self, null_mut},
+	rc::Rc,
 };
 
 #[repr(C)]
@@ -208,7 +206,7 @@ impl SharedMemoryPool {
 		}
 	}
 
-	pub(crate) fn unmap(&self) -> Result<(), Box<dyn Error>> {
+	fn unmap(&self) -> Result<(), Box<dyn Error>> {
 		if let Some(ptr) = self.ptr {
 			if unsafe { munmap(ptr, self.size as usize) } == 0 {
 				Ok(())
@@ -229,20 +227,10 @@ impl SharedMemoryPool {
 		}
 	}
 
-	fn close(&self) -> Result<(), std::io::Error> {
-		let r = unsafe { close(self.fd) };
-		if r == 0 {
-			Ok(())
-		} else {
-			Err(std::io::Error::last_os_error())
-		}
-	}
-
-	pub fn destroy(&self) -> Result<(), Box<dyn Error>> {
+	pub(crate) fn destroy(&self) -> Result<(), Box<dyn Error>> {
 		self.queue_request(self.wl_destroy())?;
 		self.unmap()?;
 		self.unlink()?;
-		self.close()?;
 		Ok(())
 	}
 
@@ -357,5 +345,13 @@ impl WaylandObject for SharedMemoryPool {
 
 	fn kind_as_str(&self) -> &'static str {
 		self.kind().as_str()
+	}
+}
+
+impl Drop for SharedMemoryPool {
+	fn drop(&mut self) {
+		// remove this unwrap
+		wlog!(DebugLevel::Important, self.kind_as_str(), "dropping self", WHITE, CYAN);
+		self.destroy().unwrap();
 	}
 }

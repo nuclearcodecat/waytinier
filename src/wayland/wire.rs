@@ -12,7 +12,9 @@ use std::{
 };
 
 use crate::{
-	GREEN, NONE, RED, YELLOW, CYAN, wayland::{DebugLevel, IdentManager, OpCode, WaylandError, WaylandObjectKind}, wlog
+	CYAN, GREEN, NONE, RED, YELLOW,
+	wayland::{DebugLevel, IdentManager, OpCode, WaylandError, WaylandObjectKind},
+	wlog,
 };
 
 pub type Id = u32;
@@ -87,7 +89,13 @@ impl Drop for IdentManager {
 	fn drop(&mut self) {
 		let len = self.idmap.len();
 		self.idmap.clear();
-		wlog!(DebugLevel::Important, "wlim", format!("destroying self, cleared {len} objects from the map"), YELLOW, CYAN);
+		wlog!(
+			DebugLevel::Important,
+			"wlim",
+			format!("destroying self, cleared {len} objects from the map"),
+			YELLOW,
+			CYAN
+		);
 	}
 }
 
@@ -201,7 +209,7 @@ impl MessageManager {
 		let mut ancillary_buf = [0; 128];
 		let mut ancillary = SocketAncillary::new(&mut ancillary_buf);
 		ancillary.add_fds(&fds);
-		wlog!(DebugLevel::Verbose, "wlmm", format!("buf: {buf:?}"), GREEN, NONE);
+		wlog!(DebugLevel::SuperVerbose, "wlmm", format!("buf: {buf:?}"), GREEN, NONE);
 		self.sock.send_vectored_with_ancillary(&[IoSlice::new(&buf)], &mut ancillary)?;
 		Ok(())
 	}
