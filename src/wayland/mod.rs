@@ -1,5 +1,5 @@
 use crate::{
-	CYAN, DebugLevel, NONE, RED, WHITE, YELLOW,
+	CYAN, DebugLevel, NONE, RED, WHITE, YELLOW, dbug,
 	wayland::{
 		wire::{Id, MessageManager, QueueEntry, WireRequest},
 		xdg_shell::xdg_surface::XdgSurface,
@@ -17,7 +17,6 @@ pub mod buffer;
 pub mod callback;
 pub mod compositor;
 pub mod display;
-pub mod region;
 pub mod registry;
 pub mod shm;
 pub mod surface;
@@ -105,7 +104,22 @@ impl God {
 		while let Some(entry) = self.wlmm.q.pop_front() {
 			match entry {
 				QueueEntry::EventResponse(ev) => {
-					let obj = self.wlim.find_obj_by_id(ev.recv_id)?;
+					let obj = match self.wlim.find_obj_by_id(ev.recv_id) {
+						Ok(o) => o,
+						Err(er) => match er {
+							WaylandError::ObjectNonExistent => {
+								wlog!(
+									DebugLevel::Important,
+									"event handler",
+									"received an event for a nonexistent object",
+									CYAN,
+									YELLOW
+								);
+								continue;
+							}
+							_ => return Err(er.boxed()),
+						},
+					};
 					let resulting_actions = obj.1.borrow_mut().handle(ev.opcode, &ev.payload)?;
 					let x: Vec<(EventAction, WaylandObjectKind, Id)> =
 						resulting_actions.into_iter().map(|x| (x, obj.0, ev.recv_id)).collect();
@@ -223,8 +237,7 @@ pub enum WaylandObjectKind {
 }
 
 impl WaylandObjectKind {
-	#[inline]
-	fn as_str(&self) -> &'static str {
+	pub(crate) fn as_str(&self) -> &'static str {
 		match self {
 			WaylandObjectKind::Display => "wl_display",
 			WaylandObjectKind::Registry => "wl_registry",
@@ -269,7 +282,18 @@ impl IdentManager {
 			YELLOW,
 			NONE
 		);
-		let id = self.free.pop_front().unwrap_or_else(|| self.new_id());
+		let id = if let Some(id) = self.free.pop_front() {
+			wlog!(
+				DebugLevel::Trivial,
+				"wlim",
+				format!("new id picked from free pool: {}", self.top_id),
+				YELLOW,
+				NONE
+			);
+			id
+		} else {
+			self.new_id()
+		};
 		self.idmap.insert(id, (kind, obj));
 		id
 	}

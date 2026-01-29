@@ -1,6 +1,7 @@
 use std::{error::Error, rc::Rc};
 
 use crate::{
+	DebugLevel, NONE, RED,
 	abstraction::app::{App, Medium, Presenter, TopLevelWindow},
 	wayland::{
 		RcCell,
@@ -8,8 +9,10 @@ use crate::{
 		surface::Surface,
 		xdg_shell::{xdg_toplevel::XdgTopLevel, xdg_wm_base::XdgWmBase},
 	},
+	wlog,
 };
 
+#[allow(dead_code)]
 pub struct TopLevelWindowSpawner<'a> {
 	pub(crate) app_id: Option<String>,
 	pub(crate) title: Option<String>,
@@ -47,11 +50,6 @@ impl<'a> TopLevelWindowSpawner<'a> {
 		self
 	}
 
-	pub fn with_premade_surface(mut self, wl_surface: RcCell<Surface>) -> Self {
-		self.sur = Some(wl_surface);
-		self
-	}
-
 	pub fn with_close_callback<F>(mut self, cb: F) -> Self
 	where
 		F: FnMut() -> bool + 'static,
@@ -60,9 +58,9 @@ impl<'a> TopLevelWindowSpawner<'a> {
 		self
 	}
 
-	pub(crate) fn new(wl_surface: Option<RcCell<Surface>>, parent: &'a mut App) -> Self {
+	pub(crate) fn new(parent: &'a mut App) -> Self {
 		Self {
-			sur: wl_surface,
+			sur: None,
 			parent,
 			app_id: None,
 			title: None,
@@ -77,11 +75,7 @@ impl<'a> TopLevelWindowSpawner<'a> {
 		let w = self.width.unwrap_or(800);
 		let h = self.width.unwrap_or(600);
 		let pf = self.pf.unwrap_or(PixelFormat::Xrgb888);
-		let surface = if let Some(sur) = &self.sur {
-			sur
-		} else {
-			&self.parent.compositor.borrow_mut().make_surface()?
-		};
+		let surface = self.parent.compositor.borrow_mut().make_surface()?;
 		let shm_pool = self.parent.shm.borrow_mut().make_pool(w * h * pf.width())?;
 		self.parent.god.borrow_mut().handle_events()?;
 		let xdg_wm_base = XdgWmBase::new_bound(self.parent.registry.clone())?;
@@ -97,7 +91,10 @@ impl<'a> TopLevelWindowSpawner<'a> {
 				xdgtl.set_title(x)?;
 			};
 		}
-		let close_cb = self.close_cb.unwrap_or(Box::new(|| true));
+		let close_cb = self.close_cb.unwrap_or(Box::new(|| {
+			wlog!(DebugLevel::Important, "toplevelwindow", "close cb triggered", RED, NONE);
+			true
+		}));
 		Ok(Presenter {
 			finished: false,
 			medium: Medium::Window(TopLevelWindow {
@@ -106,7 +103,7 @@ impl<'a> TopLevelWindowSpawner<'a> {
 				xdg_wm_base,
 				shm_pool,
 				shm: Rc::downgrade(&self.parent.shm),
-				surface: Rc::downgrade(surface),
+				surface,
 				close_cb,
 				frame: 0,
 				frame_cb: None,

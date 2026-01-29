@@ -1,11 +1,14 @@
 use std::error::Error;
 
-use crate::{make_drop_impl, wayland::{
-	DebugLevel, EventAction, OpCode, WaylandError, WaylandObject, WaylandObjectKind, WeRcGod,
-	WeakCell,
-	surface::Surface,
-	wire::{FromWirePayload, Id, WireArgument, WireRequest},
-}};
+use crate::{
+	make_drop_impl,
+	wayland::{
+		DebugLevel, EventAction, OpCode, WaylandError, WaylandObject, WaylandObjectKind, WeRcGod,
+		WeakCell,
+		surface::Surface,
+		wire::{FromWirePayload, Id, WireArgument, WireRequest},
+	},
+};
 
 pub struct XdgSurface {
 	pub(crate) god: WeRcGod,

@@ -1,7 +1,7 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
 use crate::{
-	NONE, WHITE,
+	NONE, WHITE, make_drop_impl,
 	wayland::{
 		DebugLevel, EventAction, ExpectRc, God, OpCode, RcCell, WaylandError, WaylandObject,
 		WaylandObjectKind, WeRcGod, WeakCell,
@@ -158,3 +158,5 @@ impl WaylandObject for Buffer {
 		self.kind().as_str()
 	}
 }
+
+make_drop_impl!(Buffer, wl_destroy);

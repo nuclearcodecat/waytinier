@@ -67,6 +67,7 @@ pub(crate) enum DebugLevel {
 	Important,
 	Trivial,
 	Verbose,
+	SuperVerbose,
 }
 
 #[macro_export]
@@ -92,37 +93,39 @@ macro_rules! wlog {
 #[macro_export]
 macro_rules! dbug {
 	($msg:expr) => {
-		$crate::wlog!($crate::DebugLevel::Important, "DEBUG", $msg, $crate::CYAN, $crate::CYAN);
+		$crate::wlog!($crate::DebugLevel::Verbose, "DEBUG", $msg, $crate::CYAN, $crate::CYAN);
 	};
 }
-
-// #[macro_export]
-// macro_rules! make_drop_impl {
-// 	($kind:ty, $method:ident) => {
-// 		impl Drop for $kind {
-// 			fn drop(&mut self) {
-// 				$crate::wlog!($crate::DebugLevel::Important, self.kind_as_str(), "destroying self", $crate::WHITE, $crate::CYAN);
-// 				if let Err(er) = self.queue_request(self.$method()) {
-// 					$crate::wlog!($crate::DebugLevel::Important, self.kind_as_str(), format!("queuing damnation failed: {er}"), $crate::WHITE, $crate::RED);
-// 				} else {
-// 					$crate::wlog!($crate::DebugLevel::Important, self.kind_as_str(), "damnation queued", $crate::WHITE, $crate::CYAN);
-// 				}
-// 			}
-// 		}
-// 	};
-// }
 
 #[macro_export]
 macro_rules! make_drop_impl {
 	($kind:ty, $method:ident) => {
 		impl Drop for $kind {
 			fn drop(&mut self) {
-				$crate::wlog!($crate::DebugLevel::Important, self.kind_as_str(), "dropping self", $crate::WHITE, $crate::CYAN);
+				$crate::wlog!(
+					$crate::DebugLevel::Important,
+					self.kind_as_str(),
+					"dropping self",
+					$crate::WHITE,
+					$crate::CYAN
+				);
 				if let Err(er) = self.queue_request(self.$method()) {
 					// god is dead
-					$crate::wlog!($crate::DebugLevel::Error, self.kind_as_str(), format!("queuing damnation failed: {er}"), $crate::WHITE, $crate::RED);
+					$crate::wlog!(
+						$crate::DebugLevel::Error,
+						self.kind_as_str(),
+						format!("queuing damnation failed: {er}"),
+						$crate::WHITE,
+						$crate::RED
+					);
 				} else {
-					$crate::wlog!($crate::DebugLevel::Important, self.kind_as_str(), "damnation queued", $crate::WHITE, $crate::CYAN);
+					$crate::wlog!(
+						$crate::DebugLevel::Important,
+						self.kind_as_str(),
+						"damnation queued",
+						$crate::WHITE,
+						$crate::CYAN
+					);
 				}
 			}
 		}
