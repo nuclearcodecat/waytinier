@@ -1,15 +1,17 @@
 use std::error::Error;
 
-use waytinier::abstraction::app::{App, TopLevelWindow};
+use waytinier::abstraction::app::{App, BufferBackendKind, TopLevelWindow};
 
 struct AppState {}
 
 fn main() -> Result<(), Box<dyn Error>> {
 	let mut app = App::new()?;
-	let window = TopLevelWindow::spawner(&mut app).spawn()?;
+	let window =
+		TopLevelWindow::spawner(&mut app).with_buffer_backend(BufferBackendKind::Dma).spawn()?;
 	let _ = app.push_presenter(window)?;
 
 	let mut state = AppState {};
+	#[allow(clippy::never_loop)]
 	loop {
 		app.work(&mut state, |_state, ss| {
 			for y in 0..ss.h as usize {

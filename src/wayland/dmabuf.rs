@@ -19,7 +19,7 @@
 // 7° rust doc for the vk extension
 // https://docs.rs/ash/latest/ash/ext/external_memory_dma_buf/index.html
 //
-// 8° read this shit
+// 8° this shares two textures across two processes using opengl and dmabuf which is kinda what i'm doing
 // https://blaztinn.gitlab.io/post/dmabuf-texture-sharing/
 //
 // 9° looks similar to the vk stuff from 6° but opengl
@@ -33,6 +33,16 @@
 //
 // 12° for dev_t dissection
 // https://man.archlinux.org/man/stat.2.en
+//
+// 13° drm.h
+// https://github.com/torvalds/linux/blob/master/include/uapi/drm/drm.h
+//
+// 14° dumb buffer gist
+// https://gist.github.com/Miouyouyou/2f227fd9d4116189625f501c0dcf0542
+//
+// 15° wikipedia page on drm. looks like it has lots of useful stuff. read tmr
+// https://en.wikipedia.org/wiki/Direct_Rendering_Manager
+//
 //
 // === log / todo ===
 // - i should probably use a render node? from 4° i couldn't figure out what the deal is with
@@ -59,6 +69,15 @@
 //   drm_mode_fb_cmd2«
 // - the dumb buffer from 11° seems simple. it says that gpus can't access them though. i think this
 //   just means that they can't write to them, so cpu stuff only. that's fine for now i guess
+// - 13° provides lots of info about dumb buffers at line 1245. it is exactly what i need for a
+//   simple first implementation. says it's the most primitive way to show something and only
+//   suitable for software rendering
+// - i'm getting permission denied when making the dumb buffer..... i looked up some stuff about the
+//   dumb buffers and they are usually mentioned with fbdev, kms. the 14° gist is doing rendering
+//   to a /card0 monitor using dumb buffers. and the gist is using some prime thing that only
+//   embedded gpus support
+// - i just looked up what offscreen rendering is.... i should've read 4° more closely..... i should
+//   just try making the buffer with opengl kinda like in 8°
 //
 
 use std::{
@@ -71,17 +90,16 @@ use std::{
 	str::FromStr,
 };
 
-use libc::{MAP_FAILED, MAP_PRIVATE, PROT_READ};
+use libc::{MAP_FAILED, MAP_PRIVATE, O_RDWR, PROT_READ};
 
 use crate::{
-	DebugLevel, NONE, WHITE,
-	abstraction::dma::{DRM_FORMAT_MOD_LINEAR, fourcc_mod_code},
-	dbug,
+	DebugLevel, NONE, WHITE, dbug,
+	linux::dma::{DRM_FORMAT_MOD_LINEAR, make_dumb_buffer},
 	wayland::{
 		EventAction, ExpectRc, God, OpCode, RcCell, WaylandError, WaylandObject, WaylandObjectKind,
 		WeRcGod, WeakCell,
 		registry::Registry,
-		shm::PixelFormat,
+		surface::Surface,
 		wire::{FromWirePayload, FromWireSingle, Id, WireArgument, WireRequest},
 	},
 	wlog,
@@ -90,24 +108,24 @@ use crate::{
 pub(crate) struct DmaBuf {
 	pub(crate) id: Id,
 	pub(crate) god: WeakCell<God>,
-	pub(crate) preferred_format: PixelFormat,
+	pub(crate) surface: WeakCell<Surface>,
 }
 
 impl DmaBuf {
-	pub(crate) fn new(god: RcCell<God>, pf: PixelFormat) -> Self {
+	pub(crate) fn new(god: RcCell<God>, surface: &RcCell<Surface>) -> Self {
 		Self {
 			id: 0,
 			god: Rc::downgrade(&god),
-			preferred_format: pf,
+			surface: Rc::downgrade(surface),
 		}
 	}
 
 	pub(crate) fn new_bound(
 		registry: RcCell<Registry>,
 		god: RcCell<God>,
-		pf: PixelFormat,
+		surface: &RcCell<Surface>,
 	) -> Result<RcCell<Self>, Box<dyn Error>> {
-		let me = Rc::new(RefCell::new(Self::new(god.clone(), pf)));
+		let me = Rc::new(RefCell::new(Self::new(god.clone(), surface)));
 		let id = god.borrow_mut().wlim.new_id_registered(WaylandObjectKind::DmaBuf, me.clone());
 		me.borrow_mut().id = id;
 		registry.borrow_mut().bind(id, me.borrow().kind(), 5)?;
@@ -122,8 +140,12 @@ impl DmaBuf {
 		}
 	}
 
-	pub(crate) fn get_default_feedback(&mut self) -> Result<RcCell<DmaFeedback>, Box<dyn Error>> {
-		let fb = Rc::new(RefCell::new(DmaFeedback::new(self.preferred_format)));
+	pub(crate) fn get_default_feedback(
+		&mut self,
+		this: &RcCell<Self>,
+	) -> Result<RcCell<DmaFeedback>, Box<dyn Error>> {
+		let weak = Rc::downgrade(this);
+		let fb = Rc::new(RefCell::new(DmaFeedback::new(weak)));
 		let id = self
 			.god
 			.upgrade()
@@ -185,20 +207,20 @@ pub(crate) struct DmaFeedback {
 	pub(crate) format_table: Vec<(u32, u64)>,
 	pub(crate) format_indices: Vec<u16>,
 	pub(crate) flags: Vec<TrancheFlags>,
-	pub(crate) pf: PixelFormat,
 	pub(crate) target_device: Option<u32>,
+	pub(crate) dmabuf: WeakCell<DmaBuf>,
 }
 
 impl DmaFeedback {
-	pub(crate) fn new(pf: PixelFormat) -> Self {
+	pub(crate) fn new(dmabuf: WeakCell<DmaBuf>) -> Self {
 		Self {
 			id: 0,
 			done: false,
 			format_table: vec![],
 			format_indices: vec![],
 			flags: vec![],
-			pf,
 			target_device: None,
+			dmabuf,
 		}
 	}
 
@@ -291,13 +313,13 @@ impl WaylandObject for DmaFeedback {
 					DebugLevel::Important,
 					format!("tranche target device: {:?}", target_device),
 				));
+				// todo for now assume i won't be installing a second gpu
+				// i should check the dir on my laptop actually
+				let name_str = CString::from_str("/dev/dri/renderD128")?;
 				let renderd128_stat = unsafe {
-					// for now assume i won't be installing a second gpu
-					// i should check the dir on my laptop actually
 					let mut stat_struct: libc::stat = std::mem::zeroed();
-					let name_str = CString::from_str("/dev/dri/renderD128")?;
 					let ret = libc::stat(name_str.as_ptr(), &mut stat_struct);
-					// asuit this shit
+					// todo asuit this shit
 					if ret != 0 {
 						dbug!("EPIC FAIL");
 					} else {
@@ -326,6 +348,20 @@ impl WaylandObject for DmaFeedback {
 						),
 					))
 				}
+
+				let fd = unsafe { libc::open(name_str.as_ptr(), O_RDWR) };
+				if fd == -1 {
+					pending.push(EventAction::DebugMessage(
+						DebugLevel::Important,
+						String::from("failed opening render node"),
+					));
+				} else {
+					let surf = self.dmabuf.upgrade().to_wl_err()?;
+					let dmabuf = surf.borrow();
+					let surf = dmabuf.surface.upgrade().to_wl_err()?;
+					let surf = surf.borrow();
+					make_dumb_buffer(fd, surf.w as u32, surf.h as u32, surf.pf.bpp())?;
+				}
 			}
 			// tranche_formats
 			5 => {
@@ -336,13 +372,23 @@ impl WaylandObject for DmaFeedback {
 					DebugLevel::SuperVerbose,
 					format!("tranche indices: {:?}", self.format_indices),
 				));
+				let pf = self
+					.dmabuf
+					.upgrade()
+					.to_wl_err()?
+					.borrow()
+					.surface
+					.upgrade()
+					.to_wl_err()?
+					.borrow()
+					.pf;
 				for ix in &self.format_indices {
 					let entry = self.format_table[*ix as usize];
 					pending.push(EventAction::DebugMessage(
 						DebugLevel::Verbose,
 						format!("tranche format {ix}: {:?}", entry),
 					));
-					if entry.0 == self.pf.to_fourcc() {
+					if entry.0 == pf.to_fourcc() {
 						pending.push(EventAction::DebugMessage(
 							DebugLevel::Important,
 							format!(

@@ -5,55 +5,132 @@ use crate::{
 	wayland::{
 		DebugLevel, EventAction, ExpectRc, God, OpCode, RcCell, WaylandError, WaylandObject,
 		WaylandObjectKind, WeRcGod, WeakCell,
-		shm::{PixelFormat, SharedMemoryPool},
+		dmabuf::DmaBuf,
+		shm::SharedMemoryPool,
+		surface::Surface,
 		wire::{Id, WireRequest},
 	},
 	wlog,
 };
 
-pub struct Buffer {
-	pub id: Id,
+pub(crate) enum BufferBackend {
+	SharedMemory(WeakCell<SharedMemoryPool>),
+	Dma(WeakCell<DmaBuf>),
+}
+
+pub enum BufferBackendKind {
+	SharedMemory,
+	Dma,
+}
+
+impl From<&RcCell<SharedMemoryPool>> for BufferBackend {
+	fn from(value: &RcCell<SharedMemoryPool>) -> Self {
+		Self::SharedMemory(Rc::downgrade(value))
+	}
+}
+
+impl From<&RcCell<DmaBuf>> for BufferBackend {
+	fn from(value: &RcCell<DmaBuf>) -> Self {
+		Self::Dma(Rc::downgrade(value))
+	}
+}
+
+impl BufferBackend {
+	pub(crate) fn make_buffer(
+		&self,
+		w: i32,
+		h: i32,
+		master: &RcCell<Surface>,
+	) -> Result<RcCell<Buffer>, Box<dyn Error>> {
+		let surface = master.borrow();
+		match self {
+			BufferBackend::SharedMemory(weak) => {
+				let shmp = weak.upgrade().to_wl_err()?;
+				let shmp = shmp.borrow_mut();
+				let god = shmp.god().upgrade().to_wl_err()?;
+				let mut god = god.borrow_mut();
+				let buf = Rc::new(RefCell::new(Buffer {
+					id: 0,
+					god: shmp.god(),
+					offset: 0,
+					width: w,
+					height: h,
+					in_use: false,
+					backend: Self::SharedMemory(weak.clone()),
+					master: Rc::downgrade(master),
+				}));
+				let id = god.wlim.new_id_registered(WaylandObjectKind::Buffer, buf.clone());
+				buf.borrow_mut().id = id;
+				god.wlmm.queue_request(
+					shmp.wl_create_buffer(id, (0, w, h, w * surface.pf.width()), surface.pf),
+					buf.borrow().kind(),
+				);
+				Ok(buf)
+			}
+			BufferBackend::Dma(weak) => {
+				let dmabuf = weak.upgrade().to_wl_err()?;
+				let dmabuf = dmabuf.borrow_mut();
+				let god = dmabuf.god().upgrade().to_wl_err()?;
+				let mut god = god.borrow_mut();
+				let buf = Rc::new(RefCell::new(Buffer {
+					id: 0,
+					god: dmabuf.god(),
+					offset: 0,
+					width: w,
+					height: h,
+					in_use: false,
+					backend: Self::Dma(weak.clone()),
+					master: Rc::downgrade(master),
+				}));
+				let id = god.wlim.new_id_registered(WaylandObjectKind::Buffer, buf.clone());
+				buf.borrow_mut().id = id;
+				todo!()
+			}
+		}
+	}
+
+	pub(crate) fn get_slice(&self) -> Result<*mut [u8], Box<dyn Error>> {
+		match self {
+			BufferBackend::SharedMemory(weak) => unsafe {
+				Ok(&mut *weak.upgrade().to_wl_err()?.borrow_mut().slice.unwrap())
+			},
+			BufferBackend::Dma(weak) => todo!(),
+		}
+	}
+}
+
+pub(crate) struct Buffer {
+	pub(crate) id: Id,
 	pub(crate) god: WeRcGod,
-	pub offset: i32,
-	pub width: i32,
-	pub height: i32,
-	pub format: PixelFormat,
-	pub in_use: bool,
-	pub shm_pool: WeakCell<SharedMemoryPool>,
+	pub(crate) offset: i32,
+	pub(crate) width: i32,
+	pub(crate) height: i32,
+	pub(crate) in_use: bool,
+	pub(crate) backend: BufferBackend,
+	pub(crate) master: WeakCell<Surface>,
 }
 
 impl Buffer {
 	pub fn new_initalized(
-		shmp: RcCell<SharedMemoryPool>,
+		backend: BufferBackend,
+		surface: &RcCell<Surface>,
 		(offset, width, height): (i32, i32, i32),
-		format: PixelFormat,
 		god: RcCell<God>,
-	) -> RcCell<Buffer> {
+	) -> Result<RcCell<Buffer>, Box<dyn Error>> {
 		let buf = Rc::new(RefCell::new(Buffer {
 			id: 0,
 			god: Rc::downgrade(&god),
 			offset,
 			width,
 			height,
-			format,
 			in_use: false,
-			shm_pool: Rc::downgrade(&shmp).clone(),
+			backend,
+			master: Rc::downgrade(surface),
 		}));
 		let mut god = god.borrow_mut();
 		let id = god.wlim.new_id_registered(WaylandObjectKind::Buffer, buf.clone());
-		{
-			let mut buf = buf.borrow_mut();
-			buf.id = id;
-			god.wlmm.queue_request(
-				shmp.borrow().wl_create_buffer(
-					id,
-					(offset, width, height, width * format.width()),
-					format,
-				),
-				buf.kind(),
-			);
-		}
-		buf
+		buf.borrow().backend.make_buffer(width, height, surface)?;
+		Ok(buf)
 	}
 
 	pub(crate) fn wl_destroy(&self) -> WireRequest {
@@ -91,29 +168,39 @@ impl Buffer {
 
 		pending.push((EventAction::Request(self.wl_destroy()), WaylandObjectKind::Buffer, self.id));
 
-		let shmp = self.shm_pool.upgrade().to_wl_err()?;
-		let mut shmp = shmp.borrow_mut();
-		let shm_actions = shmp.get_resize_actions_if_larger(w * h * self.format.width())?;
-		pending.append(
-			&mut shm_actions
-				.into_iter()
-				.map(|x| (x, WaylandObjectKind::SharedMemoryPool, shmp.id))
-				.collect(),
-		);
+		match &self.backend {
+			BufferBackend::SharedMemory(weak) => {
+				let shmp = weak.upgrade().to_wl_err()?;
+				let mut shmp = shmp.borrow_mut();
+				let format = self.master.upgrade().to_wl_err()?.borrow().pf;
+				let shm_actions = shmp.get_resize_actions_if_larger(w * h * format.width())?;
+				pending.append(
+					&mut shm_actions
+						.into_iter()
+						.map(|x| (x, WaylandObjectKind::SharedMemoryPool, shmp.id))
+						.collect(),
+				);
 
-		self.id = new_buf_id;
+				self.id = new_buf_id;
 
-		pending.push((
-			EventAction::Request(shmp.wl_create_buffer(
-				self.id,
-				(self.offset, self.width, self.height, self.width * self.format.width()),
-				self.format,
-			)),
-			WaylandObjectKind::Buffer,
-			self.id,
-		));
+				pending.push((
+					EventAction::Request(shmp.wl_create_buffer(
+						self.id,
+						(self.offset, self.width, self.height, self.width * format.width()),
+						format,
+					)),
+					WaylandObjectKind::Buffer,
+					self.id,
+				));
+			}
+			BufferBackend::Dma(weak) => todo!(),
+		};
 
 		Ok(pending)
+	}
+
+	pub(crate) fn get_slice(&self) -> Result<*mut [u8], Box<dyn Error>> {
+		self.backend.get_slice()
 	}
 }
 

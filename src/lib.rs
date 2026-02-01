@@ -6,7 +6,8 @@
 use std::sync::OnceLock;
 
 pub mod abstraction;
-pub mod wayland;
+pub(crate) mod linux;
+pub(crate) mod wayland;
 
 // todo
 // - use OwnedFd because it's stupid to use OwnedFd
@@ -36,6 +37,9 @@ pub mod wayland;
 //
 // DO NOT ATTACH A BUFFER BEFORE GETTING A CORRECT SIZE FROM THE
 // COMPOSITOR, YOU WASTED HOURS
+//
+// there's lots of notes about dmabuf in wayland/dmabuf.rs and there
+// probably will be more
 
 pub const NONE: &str = "\x1b[0m";
 pub const RED: &str = "\x1b[31m";

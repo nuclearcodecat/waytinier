@@ -1,7 +1,6 @@
 use crate::{
-	CYAN, NONE, WHITE,
-	abstraction::dma::fourcc_code,
-	dbug,
+	CYAN, NONE, WHITE, dbug,
+	linux::dma::fourcc_code,
 	wayland::{
 		DebugLevel, EventAction, ExpectRc, God, RcCell, WaylandError, WaylandObject,
 		WaylandObjectKind, WeRcGod,
@@ -43,17 +42,24 @@ impl PixelFormat {
 		}
 	}
 
-	pub fn width(&self) -> i32 {
+	pub const fn width(&self) -> i32 {
 		match self {
 			Self::Argb888 => 4,
 			Self::Xrgb888 => 4,
 		}
 	}
 
-	pub const fn to_fourcc(&self) -> u32 {
+	pub const fn to_fourcc(self) -> u32 {
 		match self {
 			PixelFormat::Argb888 => fourcc_code(b'X', b'R', b'2', b'4'),
 			PixelFormat::Xrgb888 => fourcc_code(b'X', b'R', b'2', b'4'),
+		}
+	}
+
+	pub const fn bpp(&self) -> u32 {
+		match self {
+			PixelFormat::Argb888 => 32,
+			PixelFormat::Xrgb888 => 32,
 		}
 	}
 }
@@ -372,7 +378,7 @@ impl WaylandObject for SharedMemoryPool {
 
 impl Drop for SharedMemoryPool {
 	fn drop(&mut self) {
-		// remove this unwrap
+		// todo remove this unwrap
 		wlog!(DebugLevel::Important, self.kind_as_str(), "dropping self", WHITE, CYAN);
 		self.destroy().unwrap();
 	}

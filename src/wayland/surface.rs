@@ -6,24 +6,27 @@ use crate::{
 		EventAction, RcCell, WaylandError, WaylandObject, WaylandObjectKind, WeRcGod,
 		buffer::Buffer,
 		callback::Callback,
+		shm::PixelFormat,
 		wire::{Id, WireArgument, WireRequest},
 	},
 };
 
-pub struct Surface {
-	pub id: Id,
+pub(crate) struct Surface {
+	pub(crate) id: Id,
 	pub(crate) god: WeRcGod,
-	pub attached_buf: Option<RcCell<Buffer>>,
-	pub w: i32,
-	pub h: i32,
+	pub(crate) attached_buf: Option<RcCell<Buffer>>,
+	pub(crate) pf: PixelFormat,
+	pub(crate) w: i32,
+	pub(crate) h: i32,
 }
 
 impl Surface {
-	pub(crate) fn new(id: Id, god: WeRcGod) -> Self {
+	pub(crate) fn new(id: Id, pf: PixelFormat, god: WeRcGod) -> Self {
 		Self {
 			id,
 			god,
 			attached_buf: None,
+			pf,
 			w: 0,
 			h: 0,
 		}
@@ -84,7 +87,7 @@ impl Surface {
 		}
 	}
 
-	pub fn damage_buffer(
+	pub(crate) fn damage_buffer(
 		&self,
 		(x, y): (i32, i32),
 		(w, h): (i32, i32),
@@ -92,7 +95,7 @@ impl Surface {
 		self.queue_request(self.wl_damage_buffer(x, y, w, h))
 	}
 
-	pub fn repaint(&self) -> Result<(), Box<dyn Error>> {
+	pub(crate) fn repaint(&self) -> Result<(), Box<dyn Error>> {
 		if let Some(buf) = &self.attached_buf {
 			let buf = buf.borrow();
 			self.queue_request(self.wl_damage_buffer(0, 0, buf.width, buf.height))
@@ -109,10 +112,19 @@ impl Surface {
 		}
 	}
 
-	pub fn frame(&self) -> Result<RcCell<Callback>, Box<dyn Error>> {
+	pub(crate) fn frame(&self) -> Result<RcCell<Callback>, Box<dyn Error>> {
 		let cb = Callback::new(self.god.clone())?;
 		self.queue_request(self.wl_frame(cb.borrow().id))?;
 		Ok(cb)
+	}
+
+	pub(crate) fn get_buffer_slice(&self) -> Result<*mut [u8], Box<dyn Error>> {
+		if let Some(buf) = &self.attached_buf {
+			let buf = buf.borrow_mut();
+			buf.get_slice()
+		} else {
+			Err(WaylandError::BufferObjectNotAttached.boxed())
+		}
 	}
 }
 

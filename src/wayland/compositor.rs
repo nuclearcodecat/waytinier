@@ -3,13 +3,14 @@ use std::{cell::RefCell, error::Error, os::fd::OwnedFd, rc::Rc};
 use crate::wayland::{
 	EventAction, ExpectRc, God, RcCell, WaylandObject, WaylandObjectKind, WeRcGod,
 	registry::Registry,
+	shm::PixelFormat,
 	surface::Surface,
 	wire::{Id, WireArgument, WireRequest},
 };
 
-pub struct Compositor {
-	pub id: Id,
-	god: WeRcGod,
+pub(crate) struct Compositor {
+	pub(crate) id: Id,
+	pub(crate) god: WeRcGod,
 }
 
 impl Compositor {
@@ -43,7 +44,9 @@ impl Compositor {
 	}
 
 	pub fn make_surface(&self) -> Result<RcCell<Surface>, Box<dyn Error>> {
-		let surface = Rc::new(RefCell::new(Surface::new(0, self.god.clone())));
+		// TODO allow choice by user
+		let surface =
+			Rc::new(RefCell::new(Surface::new(0, PixelFormat::Argb888, self.god.clone())));
 		let god = self.god.upgrade().to_wl_err()?;
 		let mut god = god.borrow_mut();
 		let id = god.wlim.new_id_registered(WaylandObjectKind::Surface, surface.clone());

@@ -72,7 +72,18 @@ pub(crate) trait WaylandObject {
 	fn kind_as_str(&self) -> &'static str;
 	fn kind(&self) -> WaylandObjectKind;
 	fn queue_request(&self, req: WireRequest) -> Result<(), Box<dyn Error>> {
-		self.god().upgrade().to_wl_err()?.borrow_mut().wlmm.queue_request(req, self.kind());
+		if let Some(god) = self.god().upgrade() {
+			let mut god = god.borrow_mut();
+			god.wlmm.queue_request(req, self.kind());
+		} else {
+			wlog!(
+				DebugLevel::Error,
+				self.kind_as_str(),
+				format!("god found dead in {}.queue_request()", self.kind_as_str()),
+				WHITE,
+				RED
+			);
+		}
 		Ok(())
 	}
 }
@@ -430,5 +441,14 @@ impl<T> ExpectRc<T> for Option<Rc<T>> {
 impl Drop for God {
 	fn drop(&mut self) {
 		wlog!(DebugLevel::Important, "god", "dropping self", RED, CYAN);
+		let len = self.wlim.idmap.len();
+		wlog!(
+			DebugLevel::Important,
+			"god",
+			format!("clearing the idmap with {len} objects"),
+			RED,
+			CYAN
+		);
+		self.wlim.idmap.clear();
 	}
 }
