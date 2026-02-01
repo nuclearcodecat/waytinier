@@ -17,7 +17,10 @@ use std::{
 	collections::HashSet,
 	error::Error,
 	ffi::CString,
-	os::{fd::{AsRawFd, FromRawFd, OwnedFd, RawFd}, raw::c_void},
+	os::{
+		fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
+		raw::c_void,
+	},
 	ptr::{self, null_mut},
 	rc::Rc,
 };
@@ -237,7 +240,14 @@ impl SharedMemoryPool {
 
 	pub(crate) fn update_ptr(&mut self) -> Result<(), Box<dyn Error>> {
 		let ptr = unsafe {
-			mmap(null_mut(), self.size as usize, PROT_READ | PROT_WRITE, MAP_SHARED, self.fd.as_raw_fd(), 0)
+			mmap(
+				null_mut(),
+				self.size as usize,
+				PROT_READ | PROT_WRITE,
+				MAP_SHARED,
+				self.fd.as_raw_fd(),
+				0,
+			)
 		};
 		if ptr == MAP_FAILED {
 			eprintln!("FAILED IN UPDATE_PTR");

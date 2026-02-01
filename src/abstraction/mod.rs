@@ -1,3 +1,3 @@
 pub mod app;
-pub mod spawner;
 pub mod dma;
+pub mod spawner;

@@ -45,7 +45,7 @@ impl App {
 		let compositor = Compositor::new_bound(registry.clone(), god.clone())?;
 		let shm = SharedMemory::new_bound_initialized(registry.clone(), god.clone())?;
 		let dmabuf = DmaBuf::new_bound(registry.clone(), god.clone())?;
-		let x = dmabuf.borrow_mut().get_default_feedback()?;
+		let _x = dmabuf.borrow_mut().get_default_feedback()?;
 		wait_for_sync!(display, god);
 
 		Ok(Self {

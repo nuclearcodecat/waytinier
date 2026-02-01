@@ -12,7 +12,9 @@ use std::{
 };
 
 use crate::{
-	CYAN, GREEN, NONE, RED, YELLOW, wayland::{DebugLevel, IdentManager, OpCode, WaylandError, WaylandObjectKind}, wlog
+	CYAN, GREEN, NONE, RED, YELLOW,
+	wayland::{DebugLevel, IdentManager, OpCode, WaylandError, WaylandObjectKind},
+	wlog,
 };
 
 pub type Id = u32;
@@ -381,7 +383,9 @@ impl FromWireSingle for u64 {
 
 	fn from_wire_element(bytes: &[u8]) -> Result<Self, Box<dyn Error>> {
 		is_payload_empty(bytes)?;
-		Ok(u64::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]]))
+		Ok(u64::from_ne_bytes([
+			bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+		]))
 	}
 }
 
@@ -398,7 +402,9 @@ pub(crate) fn is_payload_empty(payload: &[u8]) -> Result<(), Box<dyn Error>> {
 }
 
 impl<T> FromWirePayload for Vec<T>
-where T: FromWireSingle {
+where
+	T: FromWireSingle,
+{
 	fn from_wire(payload: &[u8]) -> Result<Self, Box<dyn Error>> {
 		payload[4..].chunks(T::ONE_ELEMENT_SIZE).map(T::from_wire_element).collect()
 	}

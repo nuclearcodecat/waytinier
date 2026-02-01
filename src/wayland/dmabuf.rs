@@ -6,18 +6,31 @@
 //
 // fourcc codes for the modifiers and formats
 // https://github.com/torvalds/linux/blob/master/include/uapi/drm/drm_fourcc.h
+//
+// FINALLY FOUND RENDER NODE INFO (MENTIONED IN WL DOCS), READ THIS LATER
+// https://www.kernel.org/doc/html/v4.8/gpu/drm-uapi.html
 
-use std::{cell::RefCell, error::Error, os::fd::{AsRawFd, OwnedFd}, ptr::null_mut, rc::Rc};
+use std::{
+	cell::RefCell,
+	error::Error,
+	os::fd::{AsRawFd, OwnedFd},
+	ptr::null_mut,
+	rc::Rc,
+};
 
 use libc::{MAP_FAILED, MAP_PRIVATE, PROT_READ};
 
 use crate::{
-	DebugLevel, NONE, WHITE, abstraction::dma::DRM_FORMAT_ARGB8888, dbug, wayland::{
+	DebugLevel, NONE, WHITE,
+	abstraction::dma::DRM_FORMAT_ARGB8888,
+	dbug,
+	wayland::{
 		EventAction, ExpectRc, God, OpCode, RcCell, WaylandError, WaylandObject, WaylandObjectKind,
 		WeRcGod, WeakCell,
 		registry::Registry,
-		wire::{FromBits, FromWirePayload, FromWireSingle, Id, WireArgument, WireRequest},
-	}, wlog
+		wire::{FromWirePayload, FromWireSingle, Id, WireArgument, WireRequest},
+	},
+	wlog,
 };
 
 pub(crate) struct DmaBuf {
@@ -109,6 +122,7 @@ impl WaylandObject for DmaBuf {
 	}
 }
 
+#[allow(dead_code)]
 pub(crate) struct DmaFeedback {
 	pub(crate) id: Id,
 	pub(crate) done: bool,
@@ -134,8 +148,14 @@ impl DmaFeedback {
 			let _padding = u32::from_wire_element(&chunk[4..])?;
 			let modifier = u64::from_wire_element(&chunk[8..])?;
 			self.format_table.push((format, modifier));
-		};
-		wlog!(DebugLevel::Important, self.kind_as_str(), format!("parsed {} format table: {:?}", self.kind_as_str(), self.format_table), WHITE, NONE);
+		}
+		wlog!(
+			DebugLevel::Important,
+			self.kind_as_str(),
+			format!("parsed {} format table: {:?}", self.kind_as_str(), self.format_table),
+			WHITE,
+			NONE
+		);
 		Ok(())
 	}
 }
@@ -228,7 +248,7 @@ impl WaylandObject for DmaFeedback {
 					}
 					pending.push(EventAction::DebugMessage(
 						DebugLevel::Important,
-						format!("tranche format {ix}: {:?}", entry)
+						format!("tranche format {ix}: {:?}", entry),
 					));
 				}
 			}
