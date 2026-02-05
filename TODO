@@ -1,0 +1,10 @@
+ - the structure is a disgrace to programmers worldwide, do something with
+   the god references. i could hold a `next_id` in a lighter god object
+   which doesn't hold the idmap. the idmap could just be stored in `App`.
+   i think this could work. draw this out on paper
+ - i don't like the buffer match statement. a buffer trait would be better
+ - i'm not sure if i should even focus on the dma heaps. i think i should
+   just use gbm at this point. i could still finish them and add as an
+   additional api
+ - remove id() from WaylandObject
+ - remove god() from WaylandObject if i get rid of god WeakCells entirely
