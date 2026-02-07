@@ -1,26 +1,23 @@
 use std::{error::Error, os::fd::OwnedFd};
 
-use crate::{
-	make_drop_impl,
-	wayland::{
-		EventAction, RcCell, WaylandError, WaylandObject, WaylandObjectKind, WeRcGod,
-		buffer::Buffer,
-		callback::Callback,
-		shm::PixelFormat,
-		wire::{Id, WireArgument, WireRequest},
-	},
+use crate::wayland::{
+	EventAction, IdentManager, RcCell, WaylandError, WaylandObject, WaylandObjectKind, WeRcGod,
+	buffer::{Buffer, BufferBackend},
+	callback::Callback,
+	shm::PixelFormat,
+	wire::{Id, QueueEntry, WireArgument, WireRequest},
 };
 
-pub(crate) struct Surface {
+pub(crate) struct Surface<B: BufferBackend> {
 	pub(crate) id: Id,
 	pub(crate) god: WeRcGod,
-	pub(crate) attached_buf: Option<RcCell<Buffer>>,
+	pub(crate) attached_buf: Option<RcCell<Buffer<B>>>,
 	pub(crate) pf: PixelFormat,
 	pub(crate) w: i32,
 	pub(crate) h: i32,
 }
 
-impl Surface {
+impl<B: BufferBackend + 'static> Surface<B> {
 	pub(crate) fn new(id: Id, pf: PixelFormat, god: WeRcGod) -> Self {
 		Self {
 			id,
@@ -40,8 +37,8 @@ impl Surface {
 		}
 	}
 
-	pub fn destroy(&self) -> Result<(), Box<dyn Error>> {
-		self.queue_request(self.wl_destroy())
+	pub fn destroy(&self) -> Vec<EventAction> {
+		vec![EventAction::Request(self.wl_destroy())]
 	}
 
 	pub(crate) fn wl_attach(&self, buf_id: Id) -> WireRequest {
@@ -52,14 +49,17 @@ impl Surface {
 		}
 	}
 
-	pub fn attach_buffer_obj(&mut self, to_att: RcCell<Buffer>) -> Result<(), Box<dyn Error>> {
+	pub fn attach_buffer_obj_and_att(
+		&mut self,
+		to_att: RcCell<Buffer<B>>,
+	) -> Result<Vec<QueueEntry>, Box<dyn Error>> {
 		self.attached_buf = Some(to_att.clone());
 		self.attach_buffer()
 	}
 
-	pub fn attach_buffer(&mut self) -> Result<(), Box<dyn Error>> {
+	pub fn attach_buffer(&mut self) -> Result<Vec<QueueEntry>, Box<dyn Error>> {
 		let buf = self.attached_buf.clone().ok_or(WaylandError::BufferObjectNotAttached)?;
-		self.queue_request(self.wl_attach(buf.borrow().id))
+		Ok(vec![QueueEntry::Request((self.wl_attach(buf.borrow().id), self.kind()))])
 	}
 
 	pub(crate) fn wl_commit(&self) -> WireRequest {
@@ -70,8 +70,8 @@ impl Surface {
 		}
 	}
 
-	pub fn commit(&self) -> Result<(), Box<dyn Error>> {
-		self.queue_request(self.wl_commit())
+	pub fn commit(&self) -> Vec<QueueEntry> {
+		vec![QueueEntry::Request((self.wl_commit(), self.kind()))]
 	}
 
 	pub(crate) fn wl_damage_buffer(&self, x: i32, y: i32, w: i32, h: i32) -> WireRequest {
@@ -87,18 +87,14 @@ impl Surface {
 		}
 	}
 
-	pub(crate) fn damage_buffer(
-		&self,
-		(x, y): (i32, i32),
-		(w, h): (i32, i32),
-	) -> Result<(), Box<dyn Error>> {
-		self.queue_request(self.wl_damage_buffer(x, y, w, h))
+	pub(crate) fn damage_buffer(&self, (x, y): (i32, i32), (w, h): (i32, i32)) -> Vec<QueueEntry> {
+		vec![QueueEntry::Request((self.wl_damage_buffer(x, y, w, h), self.kind()))]
 	}
 
-	pub(crate) fn repaint(&self) -> Result<(), Box<dyn Error>> {
+	pub(crate) fn repaint(&self) -> Result<Vec<QueueEntry>, Box<dyn Error>> {
 		if let Some(buf) = &self.attached_buf {
 			let buf = buf.borrow();
-			self.queue_request(self.wl_damage_buffer(0, 0, buf.width, buf.height))
+			Ok(self.damage_buffer((0, 0), (buf.width, buf.height)))
 		} else {
 			Err(WaylandError::BufferObjectNotAttached.boxed())
 		}
@@ -112,10 +108,9 @@ impl Surface {
 		}
 	}
 
-	pub(crate) fn frame(&self) -> Result<RcCell<Callback>, Box<dyn Error>> {
-		let cb = Callback::new(self.god.clone())?;
-		self.queue_request(self.wl_frame(cb.borrow().id))?;
-		Ok(cb)
+	pub(crate) fn frame(&self, wlim: &mut IdentManager) -> (RcCell<Callback>, Vec<QueueEntry>) {
+		let cb = Callback::new_registered(wlim);
+		(cb.clone(), vec![QueueEntry::Request((self.wl_frame(cb.borrow().id), self.kind()))])
 	}
 
 	pub(crate) fn get_buffer_slice(&self) -> Result<*mut [u8], Box<dyn Error>> {
@@ -128,15 +123,7 @@ impl Surface {
 	}
 }
 
-impl WaylandObject for Surface {
-	fn id(&self) -> Id {
-		self.id
-	}
-
-	fn god(&self) -> WeRcGod {
-		self.god.clone()
-	}
-
+impl<B: BufferBackend> WaylandObject for Surface<B> {
 	fn handle(
 		&mut self,
 		_opcode: super::OpCode,
@@ -156,5 +143,3 @@ impl WaylandObject for Surface {
 		self.kind().as_str()
 	}
 }
-
-make_drop_impl!(Surface, wl_destroy);

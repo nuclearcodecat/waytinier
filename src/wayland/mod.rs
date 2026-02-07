@@ -60,9 +60,6 @@ pub(crate) enum EventAction {
 }
 
 pub(crate) trait WaylandObject {
-	#[allow(dead_code)]
-	fn id(&self) -> Id;
-	fn god(&self) -> WeRcGod;
 	fn handle(
 		&mut self,
 		opcode: OpCode,
@@ -71,21 +68,6 @@ pub(crate) trait WaylandObject {
 	) -> Result<Vec<EventAction>, Box<dyn Error>>;
 	fn kind_as_str(&self) -> &'static str;
 	fn kind(&self) -> WaylandObjectKind;
-	fn queue_request(&self, req: WireRequest) -> Result<(), Box<dyn Error>> {
-		if let Some(god) = self.god().upgrade() {
-			let mut god = god.borrow_mut();
-			god.wlmm.queue_request(req, self.kind());
-		} else {
-			wlog!(
-				DebugLevel::Error,
-				self.kind_as_str(),
-				format!("god found dead in {}.queue_request()", self.kind_as_str()),
-				WHITE,
-				RED
-			);
-		}
-		Ok(())
-	}
 }
 
 pub type WeRcGod = Weak<RefCell<God>>;

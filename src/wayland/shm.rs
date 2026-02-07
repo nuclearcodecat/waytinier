@@ -4,6 +4,7 @@ use crate::{
 	wayland::{
 		DebugLevel, EventAction, ExpectRc, God, RcCell, WaylandError, WaylandObject,
 		WaylandObjectKind, WeRcGod,
+		buffer::BufferBackend,
 		registry::Registry,
 		wire::{FromWireSingle, Id, WireArgument, WireRequest},
 	},
@@ -161,8 +162,8 @@ impl SharedMemory {
 		}
 	}
 
-	pub(crate) fn create_pool(&self, size: i32, fd: RawFd, id: Id) -> Result<(), Box<dyn Error>> {
-		self.queue_request(self.wl_create_pool(size, fd, id))
+	pub(crate) fn create_pool(&self, size: i32, fd: RawFd, id: Id) -> Vec<EventAction> {
+		vec![EventAction::Request(self.wl_create_pool(size, fd, id))]
 	}
 }
 
@@ -302,14 +303,6 @@ impl SharedMemoryPool {
 }
 
 impl WaylandObject for SharedMemory {
-	fn id(&self) -> Id {
-		self.id
-	}
-
-	fn god(&self) -> WeRcGod {
-		self.god.clone()
-	}
-
 	fn handle(
 		&mut self,
 		opcode: super::OpCode,
@@ -350,14 +343,6 @@ impl WaylandObject for SharedMemory {
 }
 
 impl WaylandObject for SharedMemoryPool {
-	fn id(&self) -> Id {
-		self.id
-	}
-
-	fn god(&self) -> WeRcGod {
-		self.god.clone()
-	}
-
 	fn handle(
 		&mut self,
 		_opcode: super::OpCode,
@@ -376,10 +361,18 @@ impl WaylandObject for SharedMemoryPool {
 	}
 }
 
-impl Drop for SharedMemoryPool {
-	fn drop(&mut self) {
-		// todo remove this unwrap
-		wlog!(DebugLevel::Important, self.kind_as_str(), "dropping self", WHITE, CYAN);
-		self.destroy().unwrap();
+impl BufferBackend for SharedMemoryPool {
+	fn allocate_buffer(
+		&self,
+		buf: &RcCell<super::buffer::Buffer<Self>>,
+	) -> Result<Vec<super::wire::QueueEntry>, Box<dyn Error>>
+	where
+		Self: Sized,
+	{
+		todo!()
+	}
+
+	fn get_slice(&self) -> Result<*mut [u8], Box<dyn Error>> {
+		todo!()
 	}
 }

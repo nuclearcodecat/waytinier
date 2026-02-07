@@ -4,28 +4,24 @@ use crate::{
 	DebugLevel, NONE, RED,
 	abstraction::app::{App, Medium, Presenter, TopLevelWindow},
 	wayland::{
-		RcCell,
-		buffer::{BufferBackend, BufferBackendKind},
-		dmabuf::DmaBuf,
-		surface::Surface,
-		xdg_shell::{xdg_toplevel::XdgTopLevel, xdg_wm_base::XdgWmBase},
+		RcCell, buffer::BufferBackend, dmabuf::DmaBuf, shm::{SharedMemory, SharedMemoryPool}, surface::Surface, xdg_shell::{xdg_toplevel::XdgTopLevel, xdg_wm_base::XdgWmBase}
 	},
 	wlog,
 };
 
 #[allow(dead_code)]
-pub struct TopLevelWindowWizard<'a> {
+pub struct TopLevelWindowWizard<'a, B: BufferBackend = SharedMemoryPool> {
 	pub(crate) app_id: Option<String>,
 	pub(crate) title: Option<String>,
 	pub(crate) width: Option<i32>,
 	pub(crate) height: Option<i32>,
-	pub(crate) sur: Option<RcCell<Surface>>,
-	pub(crate) parent: &'a mut App,
+	pub(crate) sur: Option<RcCell<Surface<B>>>,
+	pub(crate) parent: &'a mut App<B>,
 	pub(crate) close_cb: Option<Box<dyn FnMut() -> bool>>,
-	pub(crate) buf_backend: Option<BufferBackendKind>,
+	pub(crate) backend: Option<B>,
 }
 
-impl<'a> TopLevelWindowWizard<'a> {
+impl<'a, B: BufferBackend> TopLevelWindowWizard<'a, B> {
 	pub fn with_app_id(mut self, app_id: &str) -> Self {
 		self.app_id = Some(String::from(app_id));
 		self
@@ -54,12 +50,7 @@ impl<'a> TopLevelWindowWizard<'a> {
 		self
 	}
 
-	pub fn with_buffer_backend(mut self, backend: BufferBackendKind) -> Self {
-		self.buf_backend = Some(backend);
-		self
-	}
-
-	pub(crate) fn new(parent: &'a mut App) -> Self {
+	pub(crate) fn new(parent: &'a mut App<B>) -> Self {
 		Self {
 			sur: None,
 			parent,
@@ -68,34 +59,15 @@ impl<'a> TopLevelWindowWizard<'a> {
 			width: None,
 			height: None,
 			close_cb: None,
-			buf_backend: None,
+			backend: None,
 		}
 	}
 
-	pub fn spawn(self) -> Result<Presenter, Box<dyn Error>> {
+	pub fn spawn(self) -> Result<Presenter<B>, Box<dyn Error>> {
 		let w = self.width.unwrap_or(800);
 		let h = self.width.unwrap_or(600);
 		let surface = self.parent.compositor.borrow_mut().make_surface()?;
-		let backend = self.buf_backend.unwrap_or(BufferBackendKind::SharedMemory);
-		let backend = match backend {
-			BufferBackendKind::SharedMemory => {
-				let shm_pool =
-					self.parent.shm.borrow_mut().make_pool(w * h * surface.borrow().pf.width())?;
-				self.parent.god.borrow_mut().handle_events()?;
-				BufferBackend::from(&shm_pool)
-			}
-			BufferBackendKind::Dma => {
-				let dmabuf_ = DmaBuf::new_bound(
-					self.parent.registry.clone(),
-					self.parent.god.clone(),
-					&surface,
-				)?;
-				let mut dmabuf = dmabuf_.borrow_mut();
-				let _fb = dmabuf.get_default_feedback(&dmabuf_)?;
-				self.parent.god.borrow_mut().handle_events()?;
-				BufferBackend::from(&dmabuf_)
-			}
-		};
+		let backend = self.backend.unwrap_or(default)
 
 		let xdg_wm_base = XdgWmBase::new_bound(self.parent.registry.clone())?;
 		let xdg_surface = xdg_wm_base.borrow_mut().make_xdg_surface(surface.clone())?;

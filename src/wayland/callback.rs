@@ -1,45 +1,39 @@
-use std::{cell::RefCell, error::Error, os::fd::OwnedFd, rc::Rc};
+use std::{cell::RefCell, os::fd::OwnedFd, rc::Rc};
 
 use crate::wayland::{
-	EventAction, ExpectRc, RcCell, WaylandError, WaylandObject, WaylandObjectKind, WeRcGod,
+	EventAction, IdentManager, RcCell, WaylandError, WaylandObject, WaylandObjectKind,
 	wire::{FromWireSingle, Id},
 };
 
 pub struct Callback {
 	pub(crate) id: Id,
-	pub(crate) god: WeRcGod,
-	pub done: bool,
-	pub data: Option<u32>,
+	pub(crate) done: bool,
+	pub(crate) data: Option<u32>,
 }
 
 impl Callback {
-	pub(crate) fn new(god: WeRcGod) -> Result<RcCell<Self>, Box<dyn Error>> {
+	pub(crate) fn new() -> RcCell<Self> {
 		let cb = Rc::new(RefCell::new(Self {
 			id: 0,
-			god: god.clone(),
 			done: false,
 			data: None,
 		}));
-		let id = god
-			.upgrade()
-			.to_wl_err()?
-			.borrow_mut()
-			.wlim
-			.new_id_registered(super::WaylandObjectKind::Callback, cb.clone());
+		cb
+	}
+
+	pub(crate) fn new_registered(wlim: &mut IdentManager) -> RcCell<Self> {
+		let cb = Rc::new(RefCell::new(Self {
+			id: 1,
+			done: false,
+			data: None,
+		}));
+		let id = wlim.new_id_registered(cb.clone().borrow().kind(), cb.clone());
 		cb.borrow_mut().id = id;
-		Ok(cb)
+		cb
 	}
 }
 
 impl WaylandObject for Callback {
-	fn id(&self) -> Id {
-		self.id
-	}
-
-	fn god(&self) -> WeRcGod {
-		self.god.clone()
-	}
-
 	fn handle(
 		&mut self,
 		opcode: super::OpCode,
