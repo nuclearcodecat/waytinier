@@ -192,10 +192,10 @@ impl God {
 				EventAction::Resize(w, h, xdgs) => {
 					let xdgs = xdgs.upgrade().to_wl_err()?;
 					let xdgs = xdgs.borrow_mut();
-					let surf = xdgs.wl_surface.upgrade().to_wl_err()?;
-					let mut surf = surf.borrow_mut();
+					let att_buf =
+						xdgs.wl_surface.upgrade().to_wl_err()?.borrow().attached_buf.clone();
 
-					if let Some(buf_) = surf.attached_buf.clone() {
+					if let Some(buf_) = att_buf {
 						let mut buf = buf_.borrow_mut();
 						wlog!(
 							DebugLevel::Important,
@@ -218,6 +218,8 @@ impl God {
 						);
 					}
 
+					let surf = xdgs.wl_surface.upgrade().to_wl_err()?;
+					let mut surf = surf.borrow_mut();
 					surf.w = w;
 					surf.h = h;
 				}

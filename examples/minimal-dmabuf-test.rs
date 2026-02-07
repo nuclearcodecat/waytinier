@@ -6,8 +6,9 @@ struct AppState {}
 
 fn main() -> Result<(), Box<dyn Error>> {
 	let mut app = App::new()?;
-	let window =
-		TopLevelWindow::spawner(&mut app).with_buffer_backend(BufferBackendKind::Dma).spawn()?;
+	let window = TopLevelWindow::spawner(&mut app)
+		.with_buffer_backend(BufferBackendKind::SharedMemory)
+		.spawn()?;
 	let _ = app.push_presenter(window)?;
 
 	let mut state = AppState {};
@@ -20,6 +21,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 					ss.buf[ix] = 0xff;
 					ss.buf[ix + 1] = 0xe4;
 					ss.buf[ix + 2] = 0xff;
+					ss.buf[ix + 3] = 0xff;
 				}
 			}
 		})?;

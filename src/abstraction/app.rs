@@ -103,15 +103,16 @@ impl App {
 
 				let mut surf = window.surface.borrow_mut();
 				if surf.attached_buf.is_none() {
-					let pf = PixelFormat::Xrgb888;
-					let width = pf.width();
-					let buf = window.backend.make_buffer(surf.w, surf.h, &window.surface)?;
+					let surf_w = surf.w;
+					let surf_h = surf.h;
+					drop(surf);
+					let buf = window.backend.make_buffer(surf_w, surf_h, &window.surface)?;
 					let id = self
 						.god
 						.borrow_mut()
 						.wlim
 						.new_id_registered(WaylandObjectKind::Buffer, buf.clone());
-					let acts = buf.borrow_mut().get_resize_actions(id, (surf.w, surf.h))?;
+					let acts = buf.borrow_mut().get_resize_actions(id, (surf_w, surf_h))?;
 					match &window.backend {
 						BufferBackend::SharedMemory(weak) => {
 							let shmp = weak.upgrade().to_wl_err()?;
@@ -132,6 +133,7 @@ impl App {
 							}
 						}
 					}
+					let mut surf = window.surface.borrow_mut();
 					surf.attach_buffer_obj(buf)?;
 					surf.commit()?;
 					drop(surf);
@@ -145,7 +147,7 @@ impl App {
 					*frame = frame.wrapping_add(1);
 
 					unsafe {
-						let slice = &mut *window.surface.borrow_mut().get_buffer_slice()?;
+						let slice = &mut *surf.get_buffer_slice()?;
 						let buf = surf.attached_buf.clone().ok_or("no buffer")?;
 						let buf = buf.borrow();
 

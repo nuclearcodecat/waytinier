@@ -18,6 +18,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 					ss.buf[ix] = 0xff;
 					ss.buf[ix + 1] = 0xe4;
 					ss.buf[ix + 2] = 0xff;
+					ss.buf[ix + 3] = 0xff;
 				}
 			}
 		})? {
